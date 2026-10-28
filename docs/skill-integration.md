@@ -13,7 +13,7 @@
 | Spec 执行 | `page-specs/batch_report.json` | 页面批次报告 |
 | 总览·耗时与 token | `.harmonybot/_summary.json` | **服务端虚拟文件**：聚合 `.harmonybot` 会话目录（自动探测数据目录自身/工程根/工程父级）下全部 `ses_*.json` 的总耗时与 token 消耗；无会话时不出现 |
 
-服务器只读，绝不写入数据目录；`.json/.jsonl/.xlsx` 之外的文件不在白名单内。`--sessionDir` 可显式指定会话目录（默认自动探测）。
+服务器只读，绝不写入数据目录；`.json/.jsonl` 之外的文件不在白名单内。`--sessionDir` 可显式指定会话目录（默认自动探测）。
 
 ## 二、三种运行形态
 

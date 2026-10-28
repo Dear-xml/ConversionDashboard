@@ -9,7 +9,7 @@ import type { RawProgress } from '../types/progress'
 import type { BatchReport } from '../types/batchReport'
 import type { FeatureInventory } from '../types/inventory'
 import type { SessionSummary } from '../types/sessionSummary'
-import { UNKNOWN } from '../constants/common'
+import { UNKNOWN, DATA_FILES } from '../constants/common'
 
 const raw = ref<RawProgress | null>(null)
 const progressMtime = ref<number | null>(null)
@@ -22,17 +22,17 @@ let stopInventory: (() => void) | undefined
 let stopSessions: (() => void) | undefined
 
 onMounted(() => {
-  stop = onJsonChange<RawProgress>('progress.json', (data, meta) => {
+  stop = onJsonChange<RawProgress>(DATA_FILES.progress, (data, meta) => {
     raw.value = data
     progressMtime.value = meta.mtimeMs ?? null
   })
-  stopBatch = onJsonChange<BatchReport>('page-specs/batch_report.json', (data) => {
+  stopBatch = onJsonChange<BatchReport>(DATA_FILES.batchReport, (data) => {
     batch.value = data
   })
-  stopInventory = onJsonChange<FeatureInventory>('feature-analysis/inventory.json', (data) => {
+  stopInventory = onJsonChange<FeatureInventory>(DATA_FILES.inventory, (data) => {
     inventory.value = data
   })
-  stopSessions = onJsonChange<SessionSummary>('.harmonybot/_summary.json', (data) => {
+  stopSessions = onJsonChange<SessionSummary>(DATA_FILES.sessions, (data) => {
     sessions.value = data
   })
 })
@@ -105,7 +105,7 @@ const invStats = computed(() => {
   <section v-if="!raw" class="panel placeholder">
     <span class="glyph">◫</span>
     <strong>等待数据</strong>
-    <small>正在读取 progress.json…</small>
+    <small>正在读取 {{ DATA_FILES.progress }}…</small>
   </section>
 
   <template v-else>
@@ -178,7 +178,7 @@ const invStats = computed(() => {
         </template>
         <div v-else class="idle-task">
           <span>当前无在途任务</span>
-          <small>{{ batch ? '等待调度或补齐前置条件' : '正在读取 page-specs/batch_report.json…' }}</small>
+          <small>{{ batch ? '等待调度或补齐前置条件' : `正在读取 ${DATA_FILES.batchReport}…` }}</small>
         </div>
       </section>
 
@@ -193,7 +193,7 @@ const invStats = computed(() => {
           <div><strong>{{ specSummary?.total ?? '—' }}</strong><small>总数</small></div>
         </div>
         <div class="bar"><i :style="{ width: specPercent + '%' }"></i></div>
-        <small>按 page-specs/batch_report.json 统计</small>
+        <small>按 {{ DATA_FILES.batchReport }} 统计</small>
       </section>
 
       <section class="panel span-3">
@@ -207,7 +207,7 @@ const invStats = computed(() => {
           <div><strong>{{ inventory ? invStats.full : '—' }}</strong><small>full</small></div>
         </div>
         <div class="bar"><i :style="{ width: (invStats.total ? Math.round((100 * invStats.mvp) / invStats.total) : 0) + '%' }"></i></div>
-        <small>共 {{ invStats.total }} 项 · 按 feature-analysis/inventory.json 统计</small>
+        <small>共 {{ invStats.total }} 项 · 按 {{ DATA_FILES.inventory }} 统计</small>
       </section>
     </div>
 

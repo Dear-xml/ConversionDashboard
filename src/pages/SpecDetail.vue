@@ -5,9 +5,9 @@ import { onJsonChange } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime } from '../utils/datetime'
 import { DEVELOPMENT_TONE, RUN_TONE, type Tone } from '../constants/batchReport'
 import type { BatchReport } from '../types/batchReport'
-import { UNKNOWN } from '../constants/common'
+import { UNKNOWN, DATA_FILES } from '../constants/common'
 
-const FILE = 'page-specs/batch_report.json'
+const FILE = DATA_FILES.batchReport
 
 const raw = ref<BatchReport | null>(null)
 const fileMtime = ref<number | null>(null)

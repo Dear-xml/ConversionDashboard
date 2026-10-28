@@ -1,12 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const ALLOWED_EXT = new Set(['.json', '.jsonl', '.xlsx'])
+const ALLOWED_EXT = new Set(['.json', '.jsonl'])
 
 const MIME = {
   '.jsonl': 'application/x-ndjson',
   '.json': 'application/json',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 }
 
 /** 会话聚合虚拟文件（前端固定订阅路径） */

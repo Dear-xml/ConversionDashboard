@@ -5,9 +5,9 @@ import { onJsonChange } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime } from '../utils/datetime'
 import { RELEASE_STAGE_TONE, CONFIDENCE_TONE, type Tone } from '../constants/inventory'
 import type { FeatureInventory } from '../types/inventory'
-import { UNKNOWN } from '../constants/common'
+import { UNKNOWN, DATA_FILES } from '../constants/common'
 
-const FILE = 'feature-analysis/inventory.json'
+const FILE = DATA_FILES.inventory
 
 const raw = ref<FeatureInventory | null>(null)
 const fileMtime = ref<number | null>(null)
@@ -73,7 +73,7 @@ const jumpToTable = (stage: string): void => {
 </script>
 
 <template>
-  <PageHeading kicker="D2H / features" title="功能清单" note="功能清单分析 · inventory.json 实时渲染" />
+  <PageHeading kicker="D2H / features" title="功能清单" :note="`功能清单分析 · ${DATA_FILES.inventory} 实时渲染`" />
 
   <section v-if="!raw" class="panel placeholder">
     <span class="glyph">☷</span>

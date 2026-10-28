@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router'
 import { routes } from '../router'
+import { DATA_FILES } from '../constants/common'
 
 const route = useRoute()
 
@@ -30,9 +31,9 @@ const tabs = routes.map((r) => {
     </nav>
     <div class="side-note">
       <strong>统一派生视图</strong>
-      <br />进度真源：progress.json
-      <br />功能真源：feature-analysis/inventory.json
-      <br />批次真源：page-specs/batch_report.json
+      <br />进度真源：{{ DATA_FILES.progress }}
+      <br />功能真源：{{ DATA_FILES.inventory }}
+      <br />批次真源：{{ DATA_FILES.batchReport }}
     </div>
   </aside>
 </template>
