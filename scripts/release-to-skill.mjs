@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// 构建前端并把产物 + 服务器脚本发布到 skill 资产目录：
+// 构建前端并把产物 + 服务器脚本发布到 skill 资产目录（单目录布局）：
 //   npm run release -- --target <skill>/assets/dashboard
-// 产物布局：target/web（前端 dist）+ target/server（dataApi.mjs / serve.mjs）
+// 产物布局：target/app（index.html + assets + serve.mjs + dataApi.mjs + package.json）
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,18 +29,32 @@ if (!target) {
 console.log('[release] 构建前端…')
 execSync('npx vite build', { cwd: projectRoot, stdio: 'inherit' })
 
-const webDir = path.resolve(target, 'web')
-const serverDir = path.resolve(target, 'server')
-fs.rmSync(webDir, { recursive: true, force: true })
-fs.rmSync(serverDir, { recursive: true, force: true })
-fs.mkdirSync(webDir, { recursive: true })
-fs.mkdirSync(serverDir, { recursive: true })
+const appDir = path.resolve(target, 'app')
+fs.rmSync(appDir, { recursive: true, force: true })
+fs.mkdirSync(appDir, { recursive: true })
 
-fs.cpSync(path.join(projectRoot, 'dist'), webDir, { recursive: true })
+// 前端产物
+fs.cpSync(path.join(projectRoot, 'dist'), appDir, { recursive: true })
+// 服务器脚本
 for (const f of ['dataApi.mjs', 'serve.mjs']) {
-  fs.copyFileSync(path.join(projectRoot, 'server', f), path.join(serverDir, f))
+  fs.copyFileSync(path.join(projectRoot, 'server', f), path.join(appDir, f))
 }
+// 包描述（bin + start，供 npm start / npx 调用）
+fs.writeFileSync(
+  path.join(appDir, 'package.json'),
+  JSON.stringify(
+    {
+      name: 'd2h-dashboard',
+      version: '0.1.0',
+      private: true,
+      description: '迁移实时看板（零依赖本地服务器 + 静态前端）',
+      bin: { 'd2h-dashboard': './serve.mjs' },
+      scripts: { start: 'node serve.mjs' },
+    },
+    null,
+    2,
+  ) + '\n',
+)
 
-console.log(`[release] 完成: ${path.resolve(target)}`)
-console.log(`[release] web ← dist (${fs.readdirSync(webDir).length} 项)`)
-console.log('[release] server ← dataApi.mjs + serve.mjs')
+console.log(`[release] 完成: ${path.resolve(appDir)}`)
+console.log(`[release] 前端 + serve.mjs + dataApi.mjs + package.json → app/ (${fs.readdirSync(appDir).length} 项)`)

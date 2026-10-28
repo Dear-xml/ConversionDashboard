@@ -22,7 +22,11 @@ function argValue(name) {
   return undefined
 }
 
-const dataDir = argValue('dataDir') ?? argValue('data-dir')
+const dataDir =
+  argValue('dataDir') ??
+  argValue('data-dir') ??
+  process.env.npm_config_dataDir ??
+  process.env.DASHBOARD_DATA_DIR
 if (!dataDir) {
   console.error('[dashboard] 缺少 --dataDir 参数（指向迁移工程的 .migration 目录）')
   process.exit(1)
@@ -35,8 +39,8 @@ if (!fs.existsSync(dataDir)) {
 // --sessionDir 可选：显式指定会话目录；未传则自动探测（数据目录同级/父级 .harmonybot）
 const sessionDirArg = argValue('sessionDir') ?? argValue('session-dir')
 const api = createDataApi(dataDir, sessionDirArg ? { sessionDir: sessionDirArg } : {})
-// 默认依次探测：skill 布局 ../web（release 产物）→ 本仓库 ../dist（vite build 产物）
-const defaultDir = ['../web', '../dist']
+// 默认依次探测：单目录布局 '.'（app 内 serve.mjs 与前端同级）→ ../web（旧 skill 布局）→ ../dist（本仓库）
+const defaultDir = ['.', '../web', '../dist']
   .map((d) => path.resolve(__dirname, d))
   .find((d) => fs.existsSync(path.join(d, 'index.html')))
 const distDir = path.resolve(argValue('dir') ?? defaultDir ?? path.join(__dirname, '..', 'web'))
@@ -63,10 +67,18 @@ const STATIC_MIME = {
   '.map': 'application/json',
 }
 
+// 服务器脚本与包描述不作为静态资源对外暴露
+const BLOCKED_STATIC = new Set(['/serve.mjs', '/dataApi.mjs', '/package.json'])
+
 const server = http.createServer((req, res) => {
   if (api.handle(req, res)) return
 
   const url = new URL(req.url ?? '/', 'http://localhost')
+  if (BLOCKED_STATIC.has(url.pathname)) {
+    res.statusCode = 404
+    res.end('not found')
+    return
+  }
   let rel = decodeURIComponent(url.pathname)
   if (rel.endsWith('/')) rel += 'index.html'
   const abs = path.join(distDir, rel)

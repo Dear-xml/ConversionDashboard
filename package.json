@@ -1,8 +1,16 @@
 {
-  "name": "conversiondashboard",
-  "private": true,
-  "version": "0.0.0",
+  "name": "d2h-dashboard",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Real-time Android-to-HarmonyOS migration dashboard: zero-dependency local server + static web reading .migration artifacts",
+  "bin": {
+    "d2h-dashboard": "server/serve.mjs"
+  },
+  "files": [
+    "dist/",
+    "server/serve.mjs",
+    "server/dataApi.mjs"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:data": "node scripts/vite-with-data.mjs dev",
@@ -10,7 +18,8 @@
     "preview": "vite preview",
     "preview:data": "node scripts/vite-with-data.mjs preview",
     "serve": "node server/serve.mjs",
-    "release": "node scripts/release-to-skill.mjs"
+    "release": "node scripts/release-to-skill.mjs",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "vue": "^3.5.44",
@@ -23,5 +32,19 @@
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
     "vue-tsc": "^3.3.13"
-  }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "android",
+    "harmonyos",
+    "arkts",
+    "migration",
+    "dashboard"
+  ]
 }
