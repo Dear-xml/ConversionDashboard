@@ -12,6 +12,8 @@ export interface DataManifest {
 export interface ChangeMeta {
   relPath: string
   fetchedAt: number
+  /** 文件最后修改时间（来自 manifest stat），供无时间字段的 JSON 兜底展示 */
+  mtimeMs?: number
 }
 
 export const DEFAULT_POLL_MS = 300_000
@@ -89,12 +91,12 @@ export function onFileChange(
   let lastStamp: FileStamp | null = null
   let timer: ReturnType<typeof setInterval> | null = null
 
-  const load = async (signal?: AbortSignal): Promise<void> => {
+  const load = async (signal?: AbortSignal, mtimeMs?: number): Promise<void> => {
     if (disposed) return
     try {
       const buf = await readFileArrayBuffer(relPath, signal)
       if (disposed) return
-      await callback(buf, { relPath, fetchedAt: Date.now() })
+      await callback(buf, { relPath, fetchedAt: Date.now(), mtimeMs })
     } catch (err) {
       if (disposed) return
       console.warn(`[JsonOperateUtils] 读取 ${relPath} 失败:`, err)
@@ -115,7 +117,7 @@ export function onFileChange(
         !lastStamp || lastStamp.mtimeMs !== stamp.mtimeMs || lastStamp.size !== stamp.size
       if (!changed) return
       lastStamp = stamp
-      await load(ctrl.signal)
+      await load(ctrl.signal, stamp.mtimeMs)
     } catch {
       // 断线：保留旧数据，等待下轮
     }

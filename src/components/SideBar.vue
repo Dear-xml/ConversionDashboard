@@ -30,9 +30,9 @@ const tabs = routes.map((r) => {
     </nav>
     <div class="side-note">
       <strong>统一派生视图</strong>
-      <br />执行真源：execution.json
-      <br />范围真源：features.json
-      <br />计划真源：pages.json
+      <br />进度真源：progress.json
+      <br />功能真源：feature-analysis/inventory.json
+      <br />批次真源：page-specs/batch_report.json
     </div>
   </aside>
 </template>

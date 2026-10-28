@@ -1,47 +1,72 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
-import { STATUS_MAP } from '../constants/progress'
-import type { RawProgress, StageStatus } from '../types/progress'
+import { formatTime, formatDuration, resolveUpdatedTime } from '../utils/datetime'
+import { formatTokens } from '../utils/format'
+import { jumpToDetail } from '../utils/navigation'
+import type { RawProgress } from '../types/progress'
+import type { BatchReport } from '../types/batchReport'
+import type { FeatureInventory } from '../types/inventory'
+import type { SessionSummary } from '../types/sessionSummary'
+import { UNKNOWN } from '../constants/common'
 
 const raw = ref<RawProgress | null>(null)
+const progressMtime = ref<number | null>(null)
+const batch = ref<BatchReport | null>(null)
+const inventory = ref<FeatureInventory | null>(null)
+const sessions = ref<SessionSummary | null>(null)
 let stop: (() => void) | undefined
+let stopBatch: (() => void) | undefined
+let stopInventory: (() => void) | undefined
+let stopSessions: (() => void) | undefined
 
 onMounted(() => {
-  stop = onJsonChange<RawProgress>('progress.json', (data) => {
+  stop = onJsonChange<RawProgress>('progress.json', (data, meta) => {
     raw.value = data
+    progressMtime.value = meta.mtimeMs ?? null
+  })
+  stopBatch = onJsonChange<BatchReport>('page-specs/batch_report.json', (data) => {
+    batch.value = data
+  })
+  stopInventory = onJsonChange<FeatureInventory>('feature-analysis/inventory.json', (data) => {
+    inventory.value = data
+  })
+  stopSessions = onJsonChange<SessionSummary>('.harmonybot/_summary.json', (data) => {
+    sessions.value = data
   })
 })
 
-onUnmounted(() => stop?.())
+onUnmounted(() => {
+  stop?.()
+  stopBatch?.()
+  stopInventory?.()
+  stopSessions?.()
+})
 
 const summary = computed(() => raw.value?.summary ?? null)
 
 const stages = computed(() =>
   (raw.value?.stages ?? []).map((s) => ({
     ...s,
-    statusLabel: STATUS_MAP[s.status]?.label ?? '未知',
+    statusLabel: s.status ?? UNKNOWN,
     isCurrent: s.id === summary.value?.currentStage,
   })),
 )
 
 const blockers = computed(() => [...new Set((raw.value?.stages ?? []).flatMap((s) => s.blockers))])
 
-const fmtTime = (iso: string | null): string => {
-  if (!iso) return '未记录'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '未记录' : d.toLocaleString()
-}
+// 阶段开始/完成时间（供状态总览阶段格展示）
+const stageStarted = (iso: string | null): string => (iso ? `开始 ${formatTime(iso)}` : '')
 
-const stageCaption = (s: { status: StageStatus; startedAt: string | null; endedAt: string | null }): string => {
-  if (s.status === 'in_progress' && s.startedAt) return `开始 ${fmtTime(s.startedAt)}`
-  if (s.status === 'completed' && s.startedAt && s.endedAt) {
+const stageEnded = (s: { startedAt: string | null; endedAt: string | null }): string => {
+  if (!s.endedAt) return ''
+  const base = `完成 ${formatTime(s.endedAt)}`
+  if (s.startedAt) {
     const ms = Date.parse(s.endedAt) - Date.parse(s.startedAt)
-    return Number.isFinite(ms) ? `用时 ${Math.round(ms / 1000)} 秒` : '用时 未记录'
+    if (Number.isFinite(ms) && ms >= 0) return `${base} · 用时 ${formatDuration(ms)}`
   }
-  if (s.status === 'blocked') return '需处理阻塞'
-  return '未开始'
+  return base
 }
 
 const sentence = computed(() => {
@@ -49,6 +74,28 @@ const sentence = computed(() => {
   if (!s) return ''
   const cur = stages.value.find((st) => st.isCurrent)
   return `当前阶段：${cur?.name ?? s.currentStage ?? '—'} · 已完成 ${s.completed} / ${s.total}`
+})
+
+// Spec 任务（page-specs/batch_report.json）
+const specSummary = computed(() => batch.value?.summary ?? null)
+
+const specPercent = computed(() => {
+  const s = specSummary.value
+  return s && s.total > 0 ? Math.round((100 * s.completed) / s.total) : 0
+})
+
+const runningTasks = computed(() =>
+  (batch.value?.tasks ?? [])
+    .filter((t) => t.development === 'in_progress')
+    .slice(0, 2),
+)
+
+// 功能清单（feature-analysis/inventory.json）：inventory 无执行进度语义，按交付层分布展示
+const invStats = computed(() => {
+  const list = inventory.value?.features ?? []
+  const stats: Record<string, number> = {}
+  for (const f of list) stats[f.release_stage] = (stats[f.release_stage] ?? 0) + 1
+  return { total: list.length, mvp: stats['mvp'] ?? 0, core: stats['core'] ?? 0, full: stats['full'] ?? 0 }
 })
 </script>
 
@@ -65,7 +112,16 @@ const sentence = computed(() => {
     <section class="panel status-overview" aria-label="第一层：状态总览">
       <div class="row">
         <h2><span class="section-index">01</span>状态总览</h2>
-        <div class="total-time"><small>总用时</small><strong>未记录</strong></div>
+        <div class="total-time-group">
+          <div class="total-time">
+            <small>总用时</small>
+            <strong>{{ sessions ? formatDuration(sessions.durationMs) : '未记录' }}</strong>
+          </div>
+          <div v-if="sessions" class="total-time" :title="`输入 ${formatTokens(sessions.tokens.input)} · 输出 ${formatTokens(sessions.tokens.output)} · 总计 ${formatTokens(sessions.tokens.total)}`">
+            <small>tokens 输入/输出</small>
+            <strong>{{ formatTokens(sessions.tokens.input) }} / {{ formatTokens(sessions.tokens.output) }}</strong>
+          </div>
+        </div>
       </div>
 
       <div class="phase-track">
@@ -84,7 +140,8 @@ const sentence = computed(() => {
             <i v-if="st.status === 'in_progress'" class="live-dot"></i>{{ st.name }}
           </span>
           <strong>{{ st.statusLabel }}</strong>
-          <small>{{ stageCaption(st) }}</small>
+          <small>{{ stageStarted(st.startedAt) || '未开始' }}</small>
+          <small v-if="stageEnded(st)">{{ stageEnded(st) }}</small>
         </button>
       </div>
 
@@ -97,7 +154,7 @@ const sentence = computed(() => {
                 ? `另有 ${blockers.length} 项已记录阻塞或准备缺口。`
                 : '尚无已记录阻塞；未检查项见环境。'
             }}
-            阶段未有完成凭据时，仅显示已有产物。更新于 {{ fmtTime(raw.updatedAt) }}
+            阶段未有完成凭据时，仅显示已有产物。更新于 {{ resolveUpdatedTime(raw, progressMtime) }}
           </small>
         </div>
         <span class="tag blue">当前阶段 {{ stages.find((s) => s.isCurrent)?.name ?? '—' }}</span>
@@ -108,40 +165,49 @@ const sentence = computed(() => {
       <section class="panel span-6">
         <div class="row">
           <h2><span class="section-index">02</span>当前任务</h2>
-          <button type="button" class="link">执行详情 →</button>
+          <button type="button" class="link" @click="jumpToDetail('tasks')">执行详情 →</button>
         </div>
-        <div class="idle-task">
+        <template v-if="runningTasks.length">
+          <div v-for="t in runningTasks" :key="t.task_id" class="current-brief">
+            <div class="row">
+              <strong class="current-title">{{ t.task_id }} · {{ t.page_id }}</strong>
+              <span class="tag blue">{{ t.development ?? UNKNOWN }}</span>
+            </div>
+            <small>{{ t.spec }}</small>
+          </div>
+        </template>
+        <div v-else class="idle-task">
           <span>当前无在途任务</span>
-          <small>等待调度或补齐前置条件</small>
+          <small>{{ batch ? '等待调度或补齐前置条件' : '正在读取 page-specs/batch_report.json…' }}</small>
         </div>
       </section>
 
       <section class="panel span-3">
         <div class="row">
           <h2>Spec 任务</h2>
-          <button type="button" class="link">全部 →</button>
+          <button type="button" class="link" @click="jumpToDetail('tasks')">全部 →</button>
         </div>
         <div class="summary-counts">
-          <div><strong>—</strong><small>完成</small></div>
-          <div><strong class="blue-number">—</strong><small>进行中</small></div>
-          <div><strong>—</strong><small>总数</small></div>
+          <div><strong class="green-number">{{ specSummary?.completed ?? '—' }}</strong><small>完成</small></div>
+          <div><strong class="blue-number">{{ specSummary?.in_progress ?? '—' }}</strong><small>进行中</small></div>
+          <div><strong>{{ specSummary?.total ?? '—' }}</strong><small>总数</small></div>
         </div>
-        <div class="bar"><i style="width: 0%"></i></div>
-        <small>完成按当前有效验收计（未接入）</small>
+        <div class="bar"><i :style="{ width: specPercent + '%' }"></i></div>
+        <small>按 page-specs/batch_report.json 统计</small>
       </section>
 
       <section class="panel span-3">
         <div class="row">
           <h2>功能清单</h2>
-          <button type="button" class="link">全部 →</button>
+          <button type="button" class="link" @click="jumpToDetail('features')">全部 →</button>
         </div>
         <div class="summary-counts">
-          <div><strong>—</strong><small>完成</small></div>
-          <div><strong class="blue-number">—</strong><small>进行中</small></div>
-          <div><strong>—</strong><small>总数</small></div>
+          <div><strong class="blue-number">{{ inventory ? invStats.mvp : '—' }}</strong><small>mvp</small></div>
+          <div><strong class="orange-number">{{ inventory ? invStats.core : '—' }}</strong><small>core</small></div>
+          <div><strong>{{ inventory ? invStats.full : '—' }}</strong><small>full</small></div>
         </div>
-        <div class="bar"><i style="width: 0%"></i></div>
-        <small>完成要求所有未排除范围通过（未接入）</small>
+        <div class="bar"><i :style="{ width: (invStats.total ? Math.round((100 * invStats.mvp) / invStats.total) : 0) + '%' }"></i></div>
+        <small>共 {{ invStats.total }} 项 · 按 feature-analysis/inventory.json 统计</small>
       </section>
     </div>
 
@@ -220,6 +286,13 @@ const sentence = computed(() => {
   padding: 5px 11px;
   border-radius: 7px;
   background: #f0f4fc;
+}
+
+.total-time-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .total-time strong {
@@ -405,16 +478,40 @@ const sentence = computed(() => {
   font-size: 11px;
 }
 
-.summary-counts > div:first-child strong {
-  color: #168168;
-}
-
 .summary-counts > div:last-child strong {
   color: #66768b;
 }
 
 .blue-number {
   color: #3766dc;
+}
+
+.orange-number {
+  color: #986221;
+}
+
+.green-number {
+  color: #168168;
+}
+
+.current-brief {
+  padding-top: 5px;
+}
+
+.current-brief + .current-brief {
+  margin-top: 12px;
+}
+
+.current-title {
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.current-brief small {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 
 .idle-task {

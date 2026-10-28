@@ -57,12 +57,36 @@
 
 > 判断原则：一个样式只被单个页面/组件使用 → 放该页面/组件 scoped；被多个地方复用 → 才考虑放进全局原子层。
 
-## 5. 目录结构约定
+## 5. 字段值展示规则（禁止枚举值中文映射）
+
+**JSON 中的枚举/状态类字段值，一律原样展示，不做中文翻译映射。**
+
+```ts
+// ✅ 正确：直接展示原始值，空值兜底
+const stageLabel = (v: string): string => v ?? UNKNOWN
+
+// ❌ 错误：为字段值配置中文标签
+const stageLabel = (v: string): string => RELEASE_STAGE[v]?.label ?? v
+const runLabel = (v: string): string => ({ not_run: '未运行', passed: '通过' })[v] ?? v
+```
+
+原因：
+1. 翻译不一定准确，错误翻译比原文更误导；
+2. 枚举值随上游持续新增，映射表必然不全，新增值会静默退化；
+3. 原始值（如 `in_progress`、`mvp`、`high`）本身就是与上游契约对齐的准确信息。
+
+补充约定：
+- 空值/缺失值统一显示 `UNKNOWN`（`src/constants/common.ts`），不自行发明占位文案；
+- **色调（tone）映射允许保留**（`Record<string, Tone>` + `?? 'muted'` 兜底）——颜色只是视觉强调，未命中回退灰调，不会产生错误信息；
+- 页面结构性文案（表头、按钮、面板标题、分页等 UI 文案）不受此规则限制，正常使用中文；
+- 筛选下拉的 option 值与文案直接使用字段原始值（如 `mvp`/`core`/`full`），筛选逻辑按原值匹配。
+
+## 6. 目录结构约定
 
 ```
 src/
   types/        # 每个 JSON 的完整结构 type（与 JSON 一一对应，纯类型，不派生）
-  constants/    # 状态/枚举 → 文案/色调 的映射（按语义分文件）
+  constants/    # tone 色调映射与通用占位符（按语义分文件；不含枚举值中文标签）
   utils/        # 通用工具（JsonOperateUtils 等）
   components/   # 复用的 UI 组件（样式 scoped 在各自文件内）
   pages/        # 页面（对应路由，样式 scoped 在各自文件内）
