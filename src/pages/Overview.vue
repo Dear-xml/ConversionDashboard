@@ -4,7 +4,7 @@ import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
 import { formatTime, formatDuration, resolveUpdatedTime } from '../utils/datetime'
 import { formatTokens } from '../utils/format'
-import { jumpToDetail } from '../utils/navigation'
+import { jumpToDetail, stageToTab } from '../utils/navigation'
 import type { RawProgress } from '../types/progress'
 import type { BatchReport } from '../types/batchReport'
 import type { FeatureInventory } from '../types/inventory'
@@ -84,11 +84,11 @@ const specPercent = computed(() => {
   return s && s.total > 0 ? Math.round((100 * s.completed) / s.total) : 0
 })
 
-const runningTasks = computed(() =>
-  (batch.value?.tasks ?? [])
-    .filter((t) => t.development === 'in_progress')
-    .slice(0, 2),
-)
+// 当前阶段（progress.json 的 currentStage 对应 stage）
+const currentStage = computed(() => stages.value.find((s) => s.isCurrent) ?? null)
+
+// 当前阶段跳转的详情 tab
+const currentStageTab = computed(() => stageToTab(currentStage.value?.id))
 
 // 功能清单（feature-analysis/inventory.json）：inventory 无执行进度语义，按交付层分布展示
 const invStats = computed(() => {
@@ -165,20 +165,21 @@ const invStats = computed(() => {
       <section class="panel span-6">
         <div class="row">
           <h2><span class="section-index">02</span>当前任务</h2>
-          <button type="button" class="link" @click="jumpToDetail('tasks')">执行详情 →</button>
+          <button type="button" class="link" @click="jumpToDetail(currentStageTab)">执行详情 →</button>
         </div>
-        <template v-if="runningTasks.length">
-          <div v-for="t in runningTasks" :key="t.task_id" class="current-brief">
+        <template v-if="currentStage">
+          <div class="current-brief">
             <div class="row">
-              <strong class="current-title">{{ t.task_id }} · {{ t.page_id }}</strong>
-              <span class="tag blue">{{ t.development ?? UNKNOWN }}</span>
+              <strong class="current-title">{{ currentStage.name }}</strong>
+              <span class="tag blue">{{ currentStage.status ?? UNKNOWN }}</span>
             </div>
-            <small>{{ t.spec }}</small>
+            <small v-if="currentStage.startedAt">{{ stageStarted(currentStage.startedAt) }}</small>
+            <small v-else>尚未开始</small>
           </div>
         </template>
         <div v-else class="idle-task">
-          <span>当前无在途任务</span>
-          <small>{{ batch ? '等待调度或补齐前置条件' : `正在读取 ${DATA_FILES.batchReport}…` }}</small>
+          <span>当前无在途阶段</span>
+          <small>正在读取 {{ DATA_FILES.progress }}…</small>
         </div>
       </section>
 

@@ -13,5 +13,5 @@ export interface DataApi {
 
 export declare function createDataApi(
   dataDir: string,
-  options?: { sessionDir?: string | null },
+  options?: { sessionDir?: string | null; writable?: Record<string, string[]> },
 ): DataApi

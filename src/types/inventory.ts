@@ -22,6 +22,8 @@ export interface FeatureInventory {
     release_rationale: string
     capability_key: string
     notes: string
+    /** 是否实现（上游 schema 定名，见 constants/common.ts FEATURE_IMPLEMENTED_FIELD） */
+    implemented?: boolean
     implementations: Record<
       string,
       {

@@ -13,4 +13,12 @@ export const DATA_FILES = {
   inventory: 'feature-analysis/inventory.json',
   /** 会话耗时与 token 聚合（服务端虚拟文件） */
   sessions: '.harmonybot/_summary.json',
+  /** 工程与环境预检报告 */
+  preflight: 'preflight-report.json',
 } as const
+
+/** 功能清单「是否实现」字段名（上游 schema 定名后仅改此处） */
+export const FEATURE_IMPLEMENTED_FIELD = 'implemented'
+
+/** 进入该阶段后功能清单锁定（progress.json 的 stage id） */
+export const FEATURE_LOCK_STAGE = 'code-conversion'

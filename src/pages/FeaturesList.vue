@@ -1,64 +1,221 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import PageHeading from '../components/PageHeading.vue'
-import { onJsonChange } from '../utils/JsonOperateUtils'
+import { onJsonChange, writeJson } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime } from '../utils/datetime'
-import { RELEASE_STAGE_TONE, CONFIDENCE_TONE, type Tone } from '../constants/inventory'
+import { CONFIDENCE_TONE, type Tone } from '../constants/inventory'
 import type { FeatureInventory } from '../types/inventory'
-import { UNKNOWN, DATA_FILES } from '../constants/common'
+import type { RawProgress } from '../types/progress'
+import { DATA_FILES, FEATURE_IMPLEMENTED_FIELD, FEATURE_LOCK_STAGE } from '../constants/common'
 
 const FILE = DATA_FILES.inventory
 
+type Feature = FeatureInventory['features'][number]
+
+/** 一级模块分组（path[0]，即 excel「一级入口」列；二三四级拼入子行标题） */
+interface ModuleGroup {
+  name: string
+  items: Feature[]
+}
+
 const raw = ref<FeatureInventory | null>(null)
+const progress = ref<RawProgress | null>(null)
 const fileMtime = ref<number | null>(null)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const stageFilter = ref('')
+const message = ref('')
 let stop: (() => void) | undefined
+let stopProgress: (() => void) | undefined
+let initialized = false
 
 onMounted(() => {
   stop = onJsonChange<FeatureInventory>(FILE, (d, meta) => {
     raw.value = d
     fileMtime.value = meta.mtimeMs ?? null
+    // 首次加载：勾选状态从「是否实现」字段初始化
+    if (!initialized) {
+      initialized = true
+      selected.value = new Set(d.features.filter((f) => f.implemented).map((f) => f.capability_key))
+    }
+  })
+  stopProgress = onJsonChange<RawProgress>(DATA_FILES.progress, (d) => {
+    progress.value = d
   })
 })
 
-onUnmounted(() => stop?.())
+onUnmounted(() => {
+  stop?.()
+  stopProgress?.()
+})
 
 const updatedText = computed(() => resolveUpdatedTime(raw.value, fileMtime.value))
 
+/** 进入开发阶段（code-conversion 及之后）后锁定功能清单编辑 */
+const locked = computed(() => {
+  const p = progress.value
+  if (!p) return false
+  const cur = p.stages.find((s) => s.id === p.summary?.currentStage)
+  const lockStage = p.stages.find((s) => s.id === FEATURE_LOCK_STAGE)
+  if (!cur || !lockStage) return false
+  return cur.order >= lockStage.order
+})
+
 const features = computed(() => raw.value?.features ?? [])
+
+// ---- 优先级草稿（本地修改，不回填 JSON）----
+const priorityDraft = ref<Record<string, string>>({})
+
+/** 生效优先级：用户改过用改后值，否则用原始 release_stage */
+const effStage = (f: Feature): string => priorityDraft.value[f.capability_key] ?? f.release_stage
+
+const isModified = (f: Feature): boolean =>
+  priorityDraft.value[f.capability_key] !== undefined &&
+  priorityDraft.value[f.capability_key] !== f.release_stage
+
+const setPriority = (f: Feature, stage: string): void => {
+  if (stage === f.release_stage) delete priorityDraft.value[f.capability_key]
+  else priorityDraft.value[f.capability_key] = stage
+  priorityDraft.value = { ...priorityDraft.value }
+}
 
 const stageStats = computed(() => {
   const stats: Record<string, number> = {}
-  for (const f of features.value) stats[f.release_stage] = (stats[f.release_stage] ?? 0) + 1
+  for (const f of features.value) stats[effStage(f)] = (stats[effStage(f)] ?? 0) + 1
   return stats
 })
 
 const filtered = computed(() => {
   const list = features.value
-  return stageFilter.value ? list.filter((f) => f.release_stage === stageFilter.value) : list
+  return stageFilter.value ? list.filter((f) => effStage(f) === stageFilter.value) : list
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
+// 合并同类项：一级模块相同的归为一组（父行 + 缩进子行，参照参考 HTML 功能/范围结构）
+const groups = computed<ModuleGroup[]>(() => {
+  const out: ModuleGroup[] = []
+  const index = new Map<string, ModuleGroup>()
+  for (const f of filtered.value) {
+    const name = f.path[0] || '未分组'
+    let g = index.get(name)
+    if (!g) {
+      g = { name, items: [] }
+      index.set(name, g)
+      out.push(g)
+    }
+    g.items.push(f)
+  }
+  return out
+})
 
-const pagedFeatures = computed(() => {
+// 分页以一级模块为最小单元（模块不被翻页切断）
+const totalPages = computed(() => Math.max(1, Math.ceil(groups.value.length / pageSize.value)))
+
+const pagedGroups = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  return filtered.value.slice(start, start + pageSize.value)
+  return groups.value.slice(start, start + pageSize.value)
 })
 
 const goPage = (p: number): void => {
   page.value = Math.min(Math.max(1, p), totalPages.value)
 }
 
-const android = (
-  f: FeatureInventory['features'][number],
-): { status: string; confidence: string } | null => f.implementations?.android ?? null
+// ---- 勾选状态（按 capability_key 记录，跨分页/筛选保留） ----
+const selected = ref<Set<string>>(new Set())
+
+const selectedCount = computed(() => selected.value.size)
+
+const isSelected = (key: string): boolean => selected.value.has(key)
+
+const toggleItem = (f: Feature, checked: boolean): void => {
+  const next = new Set(selected.value)
+  if (checked) next.add(f.capability_key)
+  else next.delete(f.capability_key)
+  selected.value = next
+}
+
+/** 父行勾选态：全选 / 半选 / 未选 */
+const groupState = (g: ModuleGroup): { checked: boolean; ind: boolean } => {
+  const count = g.items.filter((f) => selected.value.has(f.capability_key)).length
+  return {
+    checked: g.items.length > 0 && count === g.items.length,
+    ind: count > 0 && count < g.items.length,
+  }
+}
+
+/** 勾选上层 → 下层全部勾选/取消 */
+const toggleGroup = (g: ModuleGroup, checked: boolean): void => {
+  const next = new Set(selected.value)
+  for (const f of g.items) {
+    if (checked) next.add(f.capability_key)
+    else next.delete(f.capability_key)
+  }
+  selected.value = next
+}
+
+// ---- 预设：最小化=mvp 层；核心=core 层；全量=所有能选的 ----
+const presetKeys = (target: string): Set<string> => {
+  if (target === 'full') {
+    return new Set(features.value.map((f) => f.capability_key))
+  }
+  return new Set(
+    features.value.filter((f) => effStage(f) === target).map((f) => f.capability_key),
+  )
+}
+
+const presetCount = (target: string): number => presetKeys(target).size
+
+/** 预设：替换当前勾选为对应累计集合 */
+const applyPreset = (target: string): void => {
+  selected.value = presetKeys(target)
+  page.value = 1
+}
+
+/** 预设按钮选中态：当前选择恰好等于该预设全集 */
+const presetActive = (target: string): boolean => {
+  const keys = presetKeys(target)
+  return keys.size > 0 && keys.size === selected.value.size && [...keys].every((k) => selected.value.has(k))
+}
+
+/** 撤回并重载：勾选恢复为「是否实现」字段初始值，清空优先级草稿 */
+const resetDraft = (): void => {
+  selected.value = new Set(features.value.filter((f) => f.implemented).map((f) => f.capability_key))
+  priorityDraft.value = {}
+  message.value = ''
+}
+
+/** 确认：写回勾选（implemented）与优先级草稿（release_stage），成功后清草稿 */
+const confirming = ref(false)
+
+const confirm = async (): Promise<void> => {
+  if (locked.value || confirming.value) return
+  const updates = features.value.map((f) => {
+    const fields: Record<string, unknown> = {
+      [FEATURE_IMPLEMENTED_FIELD]: selected.value.has(f.capability_key),
+    }
+    const stage = priorityDraft.value[f.capability_key]
+    if (stage) fields.release_stage = stage
+    return { capability_key: f.capability_key, fields }
+  })
+  confirming.value = true
+  message.value = ''
+  try {
+    await writeJson(FILE, { expectedMtime: fileMtime.value, updates })
+    priorityDraft.value = {}
+    message.value = '已写入功能清单'
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : '写入失败'
+  } finally {
+    confirming.value = false
+  }
+}
+
+const android = (f: Feature): { status: string; confidence: string } | null =>
+  f.implementations?.android ?? null
 
 const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
 
-const stageTone = (v: string): Tone => RELEASE_STAGE_TONE[v] ?? 'muted'
-const stageLabel = (v: string): string => v ?? UNKNOWN
+// 子行标题：二三四级模块路径（去掉一级，一级在父行）
+const subPath = (f: Feature): string => f.path.slice(1).join(' / ') || '—'
 
 const scrollToEl = (id: string): void => {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -110,52 +267,113 @@ const jumpToTable = (stage: string): void => {
     </section>
 
     <section id="features-table" class="panel scroll-anchor">
+      <div v-if="locked" class="notice">已进入开发阶段（{{ FEATURE_LOCK_STAGE }}），功能清单已锁定，不可修改。</div>
       <div class="toolbar">
-        <select v-model="stageFilter" aria-label="筛选交付层" @change="page = 1">
+        <button type="button" :disabled="locked" :class="{ active: presetActive('mvp') }" @click="applyPreset('mvp')">
+          最小化实现 · {{ presetCount('mvp') }} 项
+        </button>
+        <button type="button" :disabled="locked" :class="{ active: presetActive('core') }" @click="applyPreset('core')">
+          核心实现 · {{ presetCount('core') }} 项
+        </button>
+        <button type="button" :disabled="locked" :class="{ active: presetActive('full') }" @click="applyPreset('full')">
+          全量实现 · {{ presetCount('full') }} 项
+        </button>
+        <button type="button" :disabled="locked" @click="resetDraft">撤回并重载</button>
+        <select v-model="stageFilter" :disabled="locked" aria-label="筛选交付层" @change="page = 1">
           <option value="">全部层级</option>
           <option value="mvp">mvp</option>
           <option value="core">core</option>
           <option value="full">full</option>
         </select>
-        <select v-model="pageSize" aria-label="每页条数" @change="page = 1">
-          <option :value="10">10 条/页</option>
-          <option :value="20">20 条/页</option>
-          <option :value="50">50 条/页</option>
+        <select v-model="pageSize" :disabled="locked" aria-label="每页模块数" @change="page = 1">
+          <option :value="5">5 个模块/页</option>
+          <option :value="10">10 个模块/页</option>
+          <option :value="20">20 个模块/页</option>
         </select>
+        <span class="selected-info">已选 {{ selectedCount }} 项</span>
+        <button type="button" class="primary confirm" :disabled="locked || confirming" @click="confirm">
+          {{ confirming ? '写入中…' : '确认' }}
+        </button>
+        <span v-if="message" class="confirm-msg" :class="{ error: message.includes('失败') || message.includes('变化') }">{{ message }}</span>
       </div>
 
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>层级路径</th>
-              <th>类型</th>
+              <th class="check-col">本次选用</th>
+              <th>功能 / 范围</th>
               <th>触发 → 效果</th>
-              <th>交付层</th>
+              <th>优先级</th>
               <th>能力键</th>
               <th>置信度</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="f in pagedFeatures" :key="f.capability_key">
-              <td class="title nowrap">
-                <strong>{{ f.path.join(' / ') || '—' }}</strong>
-                <small>{{ f.entry_context }}</small>
-              </td>
-              <td><span class="tag">{{ f.kind ?? UNKNOWN }}</span></td>
-              <td class="title">
-                {{ f.trigger }} → {{ f.effect }}
-                <small v-if="f.conditions.length">条件：{{ f.conditions.join('；') }}</small>
-                <small v-if="f.notes">{{ f.notes }}</small>
-              </td>
-              <td><span class="tag" :class="stageTone(f.release_stage)">{{ stageLabel(f.release_stage) }}</span></td>
-              <td class="title nowrap"><small>{{ f.capability_key }}</small></td>
-              <td>
-                <span class="tag" :class="tone(CONFIDENCE_TONE, android(f)?.confidence ?? '')">
-                  {{ android(f)?.confidence ?? '—' }}
-                </span>
-              </td>
-            </tr>
+            <template v-for="g in pagedGroups" :key="g.name">
+              <!-- 一级模块父行：勾选上层 → 下层全部联动 -->
+              <tr>
+                <td class="check-col">
+                  <input
+                    type="checkbox"
+                    aria-label="选择模块"
+                    :disabled="locked"
+                    :checked="groupState(g).checked"
+                    :indeterminate.prop="groupState(g).ind"
+                    @change="toggleGroup(g, ($event.target as HTMLInputElement).checked)"
+                  />
+                </td>
+                <td class="title">
+                  <strong>{{ g.name }}</strong>
+                  <small>{{ g.items.length }} 项</small>
+                </td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+              <!-- 功能子行 -->
+              <tr v-for="f in g.items" :key="f.capability_key">
+                <td class="check-col">
+                  <input
+                    type="checkbox"
+                    aria-label="选择功能"
+                    :disabled="locked"
+                    :checked="isSelected(f.capability_key)"
+                    @change="toggleItem(f, ($event.target as HTMLInputElement).checked)"
+                  />
+                </td>
+                <td class="scope title">
+                  {{ subPath(f) }}
+                  <small>{{ f.capability_key }}</small>
+                </td>
+                <td class="title">
+                  {{ f.trigger }} → {{ f.effect }}
+                  <small v-if="f.conditions.length">条件：{{ f.conditions.join('；') }}</small>
+                  <small v-if="f.notes">{{ f.notes }}</small>
+                </td>
+                <td>
+                  <select
+                    class="prio"
+                    :class="{ modified: isModified(f) }"
+                    :value="effStage(f)"
+                    :disabled="locked"
+                    aria-label="修改优先级"
+                    @change="setPriority(f, ($event.target as HTMLInputElement).value)"
+                  >
+                    <option value="mvp">mvp</option>
+                    <option value="core">core</option>
+                    <option value="full">full</option>
+                  </select>
+                </td>
+                <td class="title"><small>{{ f.capability_key }}</small></td>
+                <td>
+                  <span class="tag" :class="tone(CONFIDENCE_TONE, android(f)?.confidence ?? '')">
+                    {{ android(f)?.confidence ?? '—' }}
+                  </span>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -163,7 +381,7 @@ const jumpToTable = (stage: string): void => {
       <div v-if="!filtered.length" class="empty">没有符合条件的功能</div>
       <div v-else class="pagination">
         <button type="button" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
-        <span class="page-info">{{ page }} / {{ totalPages }} · 共 {{ filtered.length }} 条</span>
+        <span class="page-info">{{ page }} / {{ totalPages }} · 共 {{ groups.length }} 个模块 {{ filtered.length }} 条</span>
         <button type="button" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
       </div>
     </section>
@@ -286,7 +504,7 @@ th {
 
 td,
 th {
-  padding: 10px 12px;
+  padding: 12px;
   border-bottom: 1px solid #edf0f4;
   vertical-align: top;
 }
@@ -300,14 +518,107 @@ td.title {
   min-width: 160px;
 }
 
-.nowrap {
-  white-space: nowrap;
+/* 一级模块父行标题（参照参考 HTML 功能行 strong） */
+td.title strong {
+  font-size: 13px;
+  color: #26364d;
+}
+
+/* 子行：缩进 + 连接符 + 灰字小号（参照参考 HTML .scope） */
+td.scope {
+  padding-left: 36px;
+  color: #61728a;
+  font-size: 12px;
+}
+
+td.scope::before {
+  content: '—';
+  margin-right: 9px;
+  color: #acb6c5;
 }
 
 .empty {
   text-align: center;
   padding: 35px;
   color: var(--muted);
+}
+
+/* 勾选列与复选框（参照参考 HTML accent 样式） */
+.check-col {
+  width: 44px;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--blue);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* 顶部工具栏：预设按钮（对齐参考 .preset 样式） */
+.toolbar button {
+  font-size: 13px;
+}
+
+.toolbar button.active {
+  background: #edf3ff;
+  color: #2463eb;
+  border-color: #90b2f9;
+  font-weight: 600;
+}
+
+.selected-info {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* 确认按钮与结果提示 */
+.toolbar button.confirm {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+  font-weight: 600;
+}
+
+.toolbar button.confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.confirm-msg {
+  font-size: 12px;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.confirm-msg.error {
+  color: #b14646;
+}
+
+/* 锁定态：禁用控件视觉 */
+.toolbar button:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 优先级下拉（子行，可修改；改过的高亮蓝框） */
+select.prio {
+  padding: 3px 6px;
+  border: 1px solid #dce3ec;
+  border-radius: 5px;
+  background: #fff;
+  color: #34445c;
+  font-size: 12px;
+}
+
+select.prio.modified {
+  border-color: #90b2f9;
+  background: #f0f5ff;
+  color: #2463eb;
+  font-weight: 600;
 }
 
 .empty-inline {
@@ -392,6 +703,10 @@ td.title {
 @media (max-width: 900px) {
   .summary-counts {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  td.scope {
+    padding-left: 22px;
   }
 }
 </style>

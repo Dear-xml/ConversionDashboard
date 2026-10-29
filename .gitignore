@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local environment (do not commit local paths)
+.env
+
 # Session / tool state
 .harmonybot/
 

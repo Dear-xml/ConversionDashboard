@@ -78,6 +78,7 @@ function buildSessionsSummary(sessionDir) {
  * 创建数据目录 API：manifest 扫描 + /api/data/* HTTP 处理 + 文件监听。
  * 供 vite 插件（dev/preview）与独立服务器 server/serve.mjs 共用，零依赖。
  * options.sessionDir：undefined=自动探测（数据目录同级/父级 .harmonybot），null=禁用，字符串=显式指定。
+ * options.writable：可写文件白名单 → 允许写入的字段列表（默认仅功能清单的 implemented/release_stage）。
  */
 export function createDataApi(dataDir, options = {}) {
   const root = path.resolve(dataDir)
@@ -87,6 +88,9 @@ export function createDataApi(dataDir, options = {}) {
       : options.sessionDir === null
         ? null
         : path.resolve(options.sessionDir)
+
+  const writable =
+    options.writable ?? { 'feature-analysis/inventory.json': ['implemented', 'release_stage'] }
 
   const sessionsSummary = () => (sessionDir ? buildSessionsSummary(sessionDir) : null)
 
@@ -142,6 +146,115 @@ export function createDataApi(dataDir, options = {}) {
         res.end('missing p')
         return true
       }
+
+      // 写接口：POST /api/data/file?p=<可写文件>，body { expectedMtime, updates: [{ capability_key, fields }] }
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const allowedFields = writable[p]
+        if (!allowedFields) {
+          res.statusCode = 403
+          res.end('forbidden')
+          return true
+        }
+        const abs = path.resolve(root, p)
+        if (abs !== root && !abs.startsWith(root + path.sep)) {
+          res.statusCode = 403
+          res.end('forbidden')
+          return true
+        }
+        let body = ''
+        let tooLarge = false
+        req.on('data', (chunk) => {
+          body += chunk
+          if (body.length > 5 * 1024 * 1024) {
+            tooLarge = true
+            req.destroy()
+          }
+        })
+        req.on('end', () => {
+          if (tooLarge) {
+            res.statusCode = 413
+            res.end('too large')
+            return
+          }
+          let payload
+          try {
+            payload = JSON.parse(body)
+          } catch {
+            res.statusCode = 400
+            res.end('invalid json')
+            return
+          }
+          const { expectedMtime, updates } = payload
+          if (!Array.isArray(updates)) {
+            res.statusCode = 400
+            res.end('updates must be an array')
+            return
+          }
+          let stat
+          try {
+            stat = fs.statSync(abs)
+          } catch {
+            res.statusCode = 404
+            res.end('not found')
+            return
+          }
+          // 乐观锁：文件已被迁移进程或其他写入方改动 → 409
+          if (typeof expectedMtime === 'number' && Math.abs(stat.mtimeMs - expectedMtime) > 1) {
+            res.statusCode = 409
+            res.end('conflict: file changed')
+            return
+          }
+          let data
+          try {
+            data = JSON.parse(fs.readFileSync(abs, 'utf8'))
+          } catch {
+            res.statusCode = 500
+            res.end('read error')
+            return
+          }
+          if (!Array.isArray(data.features)) {
+            res.statusCode = 500
+            res.end('not an inventory')
+            return
+          }
+          const index = new Map(data.features.map((f, i) => [f.capability_key, i]))
+          let updated = 0
+          for (const u of updates) {
+            const i = index.get(u?.capability_key)
+            if (i === undefined || !u?.fields || typeof u.fields !== 'object') continue
+            for (const [k, v] of Object.entries(u.fields)) {
+              if (allowedFields.includes(k)) {
+                data.features[i][k] = v
+                updated++
+              }
+            }
+          }
+          // 原子写：临时文件 + rename
+          const tmp = `${abs}.tmp-${process.pid}-${Date.now()}`
+          try {
+            fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+            fs.renameSync(tmp, abs)
+          } catch {
+            res.statusCode = 500
+            res.end('write error')
+            return
+          }
+          res.statusCode = 200
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(JSON.stringify({ updated }))
+        })
+        req.on('error', () => {
+          try {
+            res.statusCode = 400
+            res.end('request error')
+          } catch {
+            /* ignore */
+          }
+        })
+        return true
+      }
+
       if (p === SESSIONS_KEY) {
         const sessions = sessionsSummary()
         if (!sessions) {

@@ -47,6 +47,30 @@ export async function readFileArrayBuffer(relPath: string, signal?: AbortSignal)
   return res.arrayBuffer()
 }
 
+/**
+ * 写回数据目录中的 JSON（增量合并，仅服务端可写白名单内的文件与字段）。
+ * body: { expectedMtime, updates: [{ capability_key, fields: {…} }] }
+ * 返回服务端 { updated }；409 冲突时抛「数据已变化」。
+ */
+export async function writeJson(
+  relPath: string,
+  body: { expectedMtime?: number | null; updates: Array<{ capability_key: string; fields: Record<string, unknown> }> },
+  signal?: AbortSignal,
+): Promise<{ updated: number }> {
+  const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    signal,
+    body: JSON.stringify(body),
+  })
+  if (res.status === 409) throw new Error('数据已变化，请刷新后重试')
+  if (res.status === 403) throw new Error('该文件不可写')
+  if (!res.ok) throw new Error(`写入失败 (HTTP ${res.status})`)
+  return res.json()
+}
+
 async function fetchText(relPath: string, signal?: AbortSignal): Promise<string> {
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
   const res = await fetch(url, { cache: 'no-store', signal })
