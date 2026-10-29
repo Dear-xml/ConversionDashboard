@@ -1,6 +1,6 @@
 {
   "name": "d2h-dashboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Real-time Android-to-HarmonyOS migration dashboard: zero-dependency local server + static web reading .migration artifacts",
   "bin": {
