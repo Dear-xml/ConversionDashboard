@@ -217,10 +217,17 @@ export function createDataApi(dataDir, options = {}) {
             res.end('not an inventory')
             return
           }
-          const index = new Map(data.features.map((f, i) => [f.capability_key, i]))
+          // 定位 key：capability_key（可选）优先，缺失时用 JSON.stringify(path) 兜底
+          const index = new Map()
+          data.features.forEach((f, i) => {
+            if (f.capability_key !== undefined && f.capability_key !== null) {
+              index.set(f.capability_key, i)
+            }
+            index.set(JSON.stringify(f.path), i)
+          })
           let updated = 0
           for (const u of updates) {
-            const i = index.get(u?.capability_key)
+            const i = index.get(u?.key)
             if (i === undefined || !u?.fields || typeof u.fields !== 'object') continue
             for (const [k, v] of Object.entries(u.fields)) {
               if (allowedFields.includes(k)) {

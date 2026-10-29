@@ -6,7 +6,7 @@ import { resolveUpdatedTime } from '../utils/datetime'
 import { CONFIDENCE_TONE, type Tone } from '../constants/inventory'
 import type { FeatureInventory } from '../types/inventory'
 import type { RawProgress } from '../types/progress'
-import { DATA_FILES, FEATURE_IMPLEMENTED_FIELD, FEATURE_LOCK_STAGE } from '../constants/common'
+import { UNKNOWN, DATA_FILES, FEATURE_IMPLEMENTED_FIELD, FEATURE_LOCK_STAGE } from '../constants/common'
 
 const FILE = DATA_FILES.inventory
 
@@ -36,7 +36,7 @@ onMounted(() => {
     // 首次加载：勾选状态从「是否实现」字段初始化
     if (!initialized) {
       initialized = true
-      selected.value = new Set(d.features.filter((f) => f.implemented).map((f) => f.capability_key))
+      selected.value = new Set(d.features.filter((f) => f.implemented).map((f) => f.capability_key ?? JSON.stringify(f.path)))
     }
   })
   stopProgress = onJsonChange<RawProgress>(DATA_FILES.progress, (d) => {
@@ -63,19 +63,50 @@ const locked = computed(() => {
 
 const features = computed(() => raw.value?.features ?? [])
 
+// ---- 唯一 key 体系 ----
+// 语义 key：capability_key（可选，跨入口去重用）优先，缺失时用 JSON.stringify(path) 兜底
+// 冲突（无 capability_key 且 path 重复）：追加 '#序号' 临时消歧，标记不稳定并告警，写回时跳过
+const keyIndex = computed(() => {
+  const counts = new Map<string, number>()
+  for (const f of features.value) {
+    const k = f.capability_key ?? JSON.stringify(f.path)
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  const keys = new Map<Feature, string>()
+  const unstable = new Set<Feature>()
+  const seen = new Map<string, number>()
+  for (const f of features.value) {
+    const k = f.capability_key ?? JSON.stringify(f.path)
+    if ((counts.get(k) ?? 0) > 1) {
+      unstable.add(f)
+      const n = seen.get(k) ?? 0
+      seen.set(k, n + 1)
+      keys.set(f, `${k}#${n}`)
+    } else {
+      keys.set(f, k)
+    }
+  }
+  return { keys, unstable, conflicted: unstable.size }
+})
+
+/** feature → 唯一 key（勾选状态 / 优先级草稿 / 写回定位统一使用） */
+const fkey = (f: Feature): string => keyIndex.value.keys.get(f) ?? ''
+
+const conflictedCount = computed(() => keyIndex.value.conflicted)
+
 // ---- 优先级草稿（本地修改，不回填 JSON）----
 const priorityDraft = ref<Record<string, string>>({})
 
 /** 生效优先级：用户改过用改后值，否则用原始 release_stage */
-const effStage = (f: Feature): string => priorityDraft.value[f.capability_key] ?? f.release_stage
+const effStage = (f: Feature): string => priorityDraft.value[fkey(f)] ?? f.release_stage
 
 const isModified = (f: Feature): boolean =>
-  priorityDraft.value[f.capability_key] !== undefined &&
-  priorityDraft.value[f.capability_key] !== f.release_stage
+  priorityDraft.value[fkey(f)] !== undefined &&
+  priorityDraft.value[fkey(f)] !== f.release_stage
 
 const setPriority = (f: Feature, stage: string): void => {
-  if (stage === f.release_stage) delete priorityDraft.value[f.capability_key]
-  else priorityDraft.value[f.capability_key] = stage
+  if (stage === f.release_stage) delete priorityDraft.value[fkey(f)]
+  else priorityDraft.value[fkey(f)] = stage
   priorityDraft.value = { ...priorityDraft.value }
 }
 
@@ -119,7 +150,7 @@ const goPage = (p: number): void => {
   page.value = Math.min(Math.max(1, p), totalPages.value)
 }
 
-// ---- 勾选状态（按 capability_key 记录，跨分页/筛选保留） ----
+// ---- 勾选状态（按唯一 key 记录，跨分页/筛选保留） ----
 const selected = ref<Set<string>>(new Set())
 
 const selectedCount = computed(() => selected.value.size)
@@ -128,14 +159,14 @@ const isSelected = (key: string): boolean => selected.value.has(key)
 
 const toggleItem = (f: Feature, checked: boolean): void => {
   const next = new Set(selected.value)
-  if (checked) next.add(f.capability_key)
-  else next.delete(f.capability_key)
+  if (checked) next.add(fkey(f))
+  else next.delete(fkey(f))
   selected.value = next
 }
 
 /** 父行勾选态：全选 / 半选 / 未选 */
 const groupState = (g: ModuleGroup): { checked: boolean; ind: boolean } => {
-  const count = g.items.filter((f) => selected.value.has(f.capability_key)).length
+  const count = g.items.filter((f) => selected.value.has(fkey(f))).length
   return {
     checked: g.items.length > 0 && count === g.items.length,
     ind: count > 0 && count < g.items.length,
@@ -146,8 +177,8 @@ const groupState = (g: ModuleGroup): { checked: boolean; ind: boolean } => {
 const toggleGroup = (g: ModuleGroup, checked: boolean): void => {
   const next = new Set(selected.value)
   for (const f of g.items) {
-    if (checked) next.add(f.capability_key)
-    else next.delete(f.capability_key)
+    if (checked) next.add(fkey(f))
+    else next.delete(fkey(f))
   }
   selected.value = next
 }
@@ -155,10 +186,10 @@ const toggleGroup = (g: ModuleGroup, checked: boolean): void => {
 // ---- 预设：最小化=mvp 层；核心=core 层；全量=所有能选的 ----
 const presetKeys = (target: string): Set<string> => {
   if (target === 'full') {
-    return new Set(features.value.map((f) => f.capability_key))
+    return new Set(features.value.map((f) => fkey(f)))
   }
   return new Set(
-    features.value.filter((f) => effStage(f) === target).map((f) => f.capability_key),
+    features.value.filter((f) => effStage(f) === target).map((f) => fkey(f)),
   )
 }
 
@@ -178,30 +209,34 @@ const presetActive = (target: string): boolean => {
 
 /** 撤回并重载：勾选恢复为「是否实现」字段初始值，清空优先级草稿 */
 const resetDraft = (): void => {
-  selected.value = new Set(features.value.filter((f) => f.implemented).map((f) => f.capability_key))
+  selected.value = new Set(features.value.filter((f) => f.implemented).map((f) => fkey(f)))
   priorityDraft.value = {}
   message.value = ''
 }
 
-/** 确认：写回勾选（implemented）与优先级草稿（release_stage），成功后清草稿 */
+/** 确认：写回勾选（implemented）与优先级草稿（release_stage），成功后清草稿；冲突项跳过并提示 */
 const confirming = ref(false)
 
 const confirm = async (): Promise<void> => {
   if (locked.value || confirming.value) return
-  const updates = features.value.map((f) => {
+  const unstable = keyIndex.value.unstable
+  const updates: Array<{ key: string; fields: Record<string, unknown> }> = []
+  for (const f of features.value) {
+    if (unstable.has(f)) continue
     const fields: Record<string, unknown> = {
-      [FEATURE_IMPLEMENTED_FIELD]: selected.value.has(f.capability_key),
+      [FEATURE_IMPLEMENTED_FIELD]: selected.value.has(fkey(f)),
     }
-    const stage = priorityDraft.value[f.capability_key]
+    const stage = priorityDraft.value[fkey(f)]
     if (stage) fields.release_stage = stage
-    return { capability_key: f.capability_key, fields }
-  })
+    updates.push({ key: fkey(f), fields })
+  }
   confirming.value = true
   message.value = ''
   try {
     await writeJson(FILE, { expectedMtime: fileMtime.value, updates })
     priorityDraft.value = {}
-    message.value = '已写入功能清单'
+    message.value =
+      unstable.size > 0 ? `已写入功能清单（${unstable.size} 项因缺少唯一标识未写入）` : '已写入功能清单'
   } catch (e) {
     message.value = e instanceof Error ? e.message : '写入失败'
   } finally {
@@ -268,6 +303,9 @@ const jumpToTable = (stage: string): void => {
 
     <section id="features-table" class="panel scroll-anchor">
       <div v-if="locked" class="notice">已进入开发阶段（{{ FEATURE_LOCK_STAGE }}），功能清单已锁定，不可修改。</div>
+      <div v-if="conflictedCount" class="notice">
+        检测到 {{ conflictedCount }} 个功能缺少唯一标识（path 重复且无 capability_key），已临时按序号区分；这些项确认时不会写入，请上游补 capability_key 或修正 path。
+      </div>
       <div class="toolbar">
         <button type="button" :disabled="locked" :class="{ active: presetActive('mvp') }" @click="applyPreset('mvp')">
           最小化实现 · {{ presetCount('mvp') }} 项
@@ -333,19 +371,19 @@ const jumpToTable = (stage: string): void => {
                 <td>—</td>
               </tr>
               <!-- 功能子行 -->
-              <tr v-for="f in g.items" :key="f.capability_key">
+              <tr v-for="f in g.items" :key="fkey(f)">
                 <td class="check-col">
                   <input
                     type="checkbox"
                     aria-label="选择功能"
                     :disabled="locked"
-                    :checked="isSelected(f.capability_key)"
+                    :checked="isSelected(fkey(f))"
                     @change="toggleItem(f, ($event.target as HTMLInputElement).checked)"
                   />
                 </td>
                 <td class="scope title">
                   {{ subPath(f) }}
-                  <small>{{ f.capability_key }}</small>
+                  <small>{{ f.capability_key ?? UNKNOWN }}</small>
                 </td>
                 <td class="title">
                   {{ f.trigger }} → {{ f.effect }}
@@ -366,7 +404,7 @@ const jumpToTable = (stage: string): void => {
                     <option value="full">full</option>
                   </select>
                 </td>
-                <td class="title"><small>{{ f.capability_key }}</small></td>
+                <td class="title"><small>{{ f.capability_key ?? UNKNOWN }}</small></td>
                 <td>
                   <span class="tag" :class="tone(CONFIDENCE_TONE, android(f)?.confidence ?? '')">
                     {{ android(f)?.confidence ?? '—' }}

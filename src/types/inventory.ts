@@ -20,7 +20,8 @@ export interface FeatureInventory {
     conditions: string[]
     release_stage: string
     release_rationale: string
-    capability_key: string
+    /** 可选：仅用于跨入口能力去重（上游 inventory-schema）；缺失时前端以 JSON.stringify(path) 兜底作唯一 key */
+    capability_key?: string
     notes: string
     /** 是否实现（上游 schema 定名，见 constants/common.ts FEATURE_IMPLEMENTED_FIELD） */
     implemented?: boolean

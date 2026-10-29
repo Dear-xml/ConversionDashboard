@@ -49,12 +49,16 @@ export async function readFileArrayBuffer(relPath: string, signal?: AbortSignal)
 
 /**
  * 写回数据目录中的 JSON（增量合并，仅服务端可写白名单内的文件与字段）。
- * body: { expectedMtime, updates: [{ capability_key, fields: {…} }] }
+ * body: { expectedMtime, updates: [{ key, fields: {…} }] }
+ * key 为功能唯一标识：capability_key 优先，缺失用 JSON.stringify(path)。
  * 返回服务端 { updated }；409 冲突时抛「数据已变化」。
  */
 export async function writeJson(
   relPath: string,
-  body: { expectedMtime?: number | null; updates: Array<{ capability_key: string; fields: Record<string, unknown> }> },
+  body: {
+    expectedMtime?: number | null
+    updates: Array<{ key: string; fields: Record<string, unknown> }>
+  },
   signal?: AbortSignal,
 ): Promise<{ updated: number }> {
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
