@@ -238,23 +238,15 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
       <section class="panel span-6">
         <div class="row">
           <h2><span class="section-index">03</span>安卓工程</h2>
-          <button type="button" class="link" @click="jumpToDetail('project')">工程详情 →</button>
+          <button type="button" class="link">工程详情 →</button>
         </div>
-        <template v-if="preflight">
-          <div class="project-metrics">
-            <div><strong>{{ preflightStats.passed }}/{{ preflightStats.total }}</strong><small>预检通过</small></div>
-          </div>
-          <div class="stack-pills">
-            <span class="tag">git {{ (preflight.gitHead ?? UNKNOWN).slice(0, 7) }}</span>
-          </div>
-          <small>{{ preflight.projectRoot }}</small>
-        </template>
-        <template v-else>
-          <div class="project-metrics">
-            <div><strong>—</strong><small>预检状态</small></div>
-          </div>
-          <div class="stack-pills"><small>尚未载入预检报告</small></div>
-        </template>
+        <div class="project-metrics">
+          <div><strong>—</strong><small>源文件</small></div>
+          <div><strong>—</strong><small>物理行数</small></div>
+          <div><strong>—</strong><small>已记录依赖</small></div>
+        </div>
+        <div class="stack-pills"><small>技术栈未采集</small></div>
+        <small>尚未接入工程概览报告</small>
       </section>
 
       <section class="panel span-6">
