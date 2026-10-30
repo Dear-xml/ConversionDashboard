@@ -276,4 +276,26 @@ td .tag {
   font-size: 12px;
   color: var(--muted);
 }
+
+@media (max-width: 900px) {
+  .summary-counts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .summary-counts {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+
+  .summary-counts strong {
+    font-size: 20px;
+  }
+
+  .toolbar input[type='search'] {
+    min-width: 0;
+    width: 100%;
+  }
+}
 </style>

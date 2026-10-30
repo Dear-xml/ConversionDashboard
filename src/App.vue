@@ -17,6 +17,7 @@ import AppHeader from './components/AppHeader.vue'
 <style scoped>
 .shell {
   margin-left: 214px;
+  min-width: 0;
 }
 .content {
   max-width: 1550px;
@@ -28,7 +29,7 @@ import AppHeader from './components/AppHeader.vue'
     margin-left: 0;
   }
   .content {
-    padding: 18px;
+    padding: 14px 14px 32px;
   }
 }
 </style>

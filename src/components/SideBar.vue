@@ -109,4 +109,42 @@ const tabs = routes.map((r) => {
 .side-note strong {
   color: #41536e;
 }
+
+/* 窄屏：侧栏改静态顶栏，tab 水平滚动，隐藏底部说明（参照参考 HTML <700px 处理） */
+@media (max-width: 700px) {
+  .sidebar {
+    position: static;
+    width: auto;
+    padding: 14px 18px;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-size: 18px;
+  }
+  .brand small {
+    display: none;
+  }
+  .tabs {
+    display: flex;
+    overflow-x: auto;
+    flex: 1 1 100%;
+    order: 3;
+    gap: 4px;
+    margin-top: 4px;
+    padding-bottom: 2px;
+  }
+  .tab {
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
+  .tab .icon {
+    display: none;
+  }
+  .side-note {
+    display: none;
+  }
+}
 </style>

@@ -33,4 +33,12 @@ defineProps<{
   color: #6d83a9;
   margin-bottom: 5px;
 }
+
+@media (max-width: 700px) {
+  .page-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
 </style>

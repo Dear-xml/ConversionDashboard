@@ -747,4 +747,19 @@ select.prio.modified {
     padding-left: 22px;
   }
 }
+
+@media (max-width: 560px) {
+  .summary-counts {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+
+  .summary-counts strong {
+    font-size: 20px;
+  }
+
+  .confirm-msg {
+    white-space: normal;
+  }
+}
 </style>

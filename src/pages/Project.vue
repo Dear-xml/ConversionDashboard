@@ -188,4 +188,26 @@ const evidenceLines = (c: PreflightReport['checks'][number]): string[] => {
   overflow-wrap: anywhere;
   margin: 2px 0;
 }
+
+@media (max-width: 900px) {
+  .summary-counts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .summary-counts {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+  }
+
+  .summary-counts strong {
+    font-size: 20px;
+  }
+
+  .meta-item {
+    flex-direction: column;
+    gap: 2px;
+  }
+}
 </style>

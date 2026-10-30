@@ -367,6 +367,13 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   color: #34445c;
 }
 
+/* 阶段格文字防溢出（时间/长名换行，不撑破 cell） */
+.phase-cell strong,
+.phase-cell small,
+.phase-label {
+  overflow-wrap: anywhere;
+}
+
 .phase-active {
   background: #eaf1ff;
   border-color: #b5c9f7;
@@ -426,12 +433,14 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   font-size: 13px;
   font-weight: 500;
   color: #3b5279;
+  overflow-wrap: anywhere;
 }
 
 .overview-sentence small {
   display: block;
   margin-top: 3px;
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 /* 第二层：任务总览 */
@@ -718,6 +727,7 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
 
 .blocker-item strong {
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .blocker-dot {
@@ -739,6 +749,7 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   margin-top: 5px;
 }
 
+/* 中间区间：阶段条降 4 列，span-3 保持 6（两卡并排） */
 @media (max-width: 1100px) {
   .span-3 {
     grid-column: span 6;
@@ -755,13 +766,24 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   .task-overview .span-6 {
     grid-column: span 12;
   }
+
+  .phase-track {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .phase-track {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  /* 概览 summary-counts（Spec/功能卡）3 列收窄为保持，第三层 4 列降 2 */
+  .environment-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
   .overview-sentence {
     display: block;
   }
@@ -773,6 +795,7 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
 }
 
 @media (max-width: 700px) {
+  .span-3,
   .span-4,
   .span-6,
   .span-8 {
@@ -780,12 +803,35 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   }
 
   .overview-sentence {
-    margin: 0 -16px;
-    padding: 14px 16px;
+    margin: 0 -14px;
+    padding: 14px;
   }
 
-  .project-overview .span-6 {
-    grid-column: span 12;
+  .summary-counts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .project-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .phase-track {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-counts {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+
+  .summary-counts strong {
+    font-size: 20px;
+  }
+
+  .environment-summary {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 </style>

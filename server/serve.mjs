@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 // 独立迁移看板服务器（零依赖，Node >= 18）：
 //   node server/serve.mjs --dataDir <project>/.migration [--port 8080] [--host 127.0.0.1] [--dir ../web]
+//   node server/serve.mjs --dataDir <project>/.migration --detach [--log-file <path>]
+// --detach：自守护启动——父进程 spawn 分离子进程（stdout/stderr 直写日志文件），
+//   轮询日志直到子进程就绪后原样打印 stdout 契约并退出；调用方无需 shell 重定向/引号转义。
+//   默认日志 %TEMP%/d2h-dashboard-<dataDir哈希8位>.log（每次启动截断重写，跨项目天然隔离）。
 // stdout 契约（供 skill 解析）：
 //   [dashboard] dataDir=<绝对路径>
 //   [dashboard] http://<host>:<实际端口>
 import http from 'node:http'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { createDataApi } from './dataApi.mjs'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 function argValue(name) {
   const argv = process.argv
@@ -35,6 +43,69 @@ if (!fs.existsSync(dataDir)) {
   console.error(`[dashboard] 数据目录不存在: ${dataDir}`)
   process.exit(1)
 }
+
+// ---- --detach：spawn 分离子进程并等待就绪，然后父进程退出 ----
+if (process.argv.includes('--detach')) {
+  const root = path.resolve(dataDir)
+  const logFile =
+    argValue('log-file') ??
+    path.join(os.tmpdir(), `d2h-dashboard-${createHash('sha1').update(root).digest('hex').slice(0, 8)}.log`)
+  const errFile = `${logFile}.err`
+  const forward = []
+  const argv = process.argv.slice(2)
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--detach') continue
+    if (a === '--log-file') { i += 1; continue }
+    if (a.startsWith('--log-file=')) continue
+    forward.push(a)
+  }
+  // 'w' 截断：每次启动重写日志，杜绝读到上一轮/其他项目的残留内容
+  const out = fs.openSync(logFile, 'w')
+  const err = fs.openSync(errFile, 'w')
+  const child = spawn(process.execPath, [__filename, ...forward], {
+    detached: true,
+    stdio: ['ignore', out, err],
+    windowsHide: true,
+  })
+  child.unref()
+  fs.closeSync(out)
+  fs.closeSync(err)
+  let spawnError = null
+  child.on('error', (e) => { spawnError = e })
+  const tail = (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).slice(-15).join('\n')
+    } catch {
+      return ''
+    }
+  }
+  const deadline = Date.now() + 20000
+  const poll = setInterval(() => {
+    let ready = null
+    try {
+      ready = fs.readFileSync(logFile, 'utf8').match(/^\[dashboard\] http:\/\/\S+/m)
+    } catch {
+      /* 日志尚未写入，继续等待 */
+    }
+    if (ready) {
+      clearInterval(poll)
+      console.log(`[dashboard] dataDir=${root}`)
+      console.log(ready[0])
+      console.log(`[dashboard] detached pid=${child.pid} log=${logFile}`)
+      process.exit(0)
+    }
+    if (spawnError || child.exitCode !== null || Date.now() > deadline) {
+      clearInterval(poll)
+      try { child.kill() } catch { /* 已退出 */ }
+      console.error(`[dashboard] detach 启动失败${spawnError ? `: ${spawnError.message}` : ''}`)
+      if (tail(errFile)) console.error(`--- ${errFile} ---\n${tail(errFile)}`)
+      if (tail(logFile)) console.error(`--- ${logFile} ---\n${tail(logFile)}`)
+      process.exit(1)
+    }
+  }, 150)
+}
+
 
 // --sessionDir 可选：显式指定会话目录；未传则自动探测（数据目录同级/父级 .harmonybot）
 const sessionDirArg = argValue('sessionDir') ?? argValue('session-dir')

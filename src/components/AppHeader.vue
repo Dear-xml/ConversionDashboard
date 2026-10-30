@@ -27,4 +27,12 @@ defineProps<{ title?: string }>()
   align-items: center;
   gap: 10px;
 }
+@media (max-width: 700px) {
+  .topbar {
+    padding: 0 18px;
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+  }
+}
 </style>
