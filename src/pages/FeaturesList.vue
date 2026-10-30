@@ -222,6 +222,40 @@ const showDialog = (text: string): void => {
   dlg.value?.showModal()
 }
 
+// ---- 二次确认：点击确认先弹总结，用户确认后真正写回 ----
+const summaryDlg = ref<HTMLDialogElement | null>(null)
+const summaryText = ref('')
+
+const buildSummary = (): string => {
+  let added = 0
+  let removed = 0
+  for (const f of features.value) {
+    const k = fkey(f)
+    const now = selected.value.has(k)
+    const orig = !!f.should_develop
+    if (orig && !now) removed++
+    else if (!orig && now) added++
+  }
+  const priorityChanged = features.value.filter((f) => priorityDraft.value[fkey(f)] !== undefined).length
+  const parts = [`已选 ${selected.value.size} 项`]
+  if (added) parts.push(`新增 ${added} 项`)
+  if (removed) parts.push(`取消 ${removed} 项`)
+  if (priorityChanged) parts.push(`优先级调整 ${priorityChanged} 项`)
+  parts.push('确认写入功能清单？')
+  return parts.join(' · ')
+}
+
+const openConfirm = (): void => {
+  if (locked.value || confirming.value) return
+  summaryText.value = buildSummary()
+  summaryDlg.value?.showModal()
+}
+
+const doConfirm = (): void => {
+  summaryDlg.value?.close()
+  void confirm()
+}
+
 const confirm = async (): Promise<void> => {
   if (locked.value || confirming.value) return
   const unstable = keyIndex.value.unstable
@@ -336,7 +370,7 @@ const jumpToTable = (stage: string): void => {
           <option :value="20">20 个模块/页</option>
         </select>
         <span class="selected-info">已选 {{ selectedCount }} 项</span>
-        <button type="button" class="primary confirm" :disabled="locked || confirming" @click="confirm">
+        <button type="button" class="primary confirm" :disabled="locked || confirming" @click="openConfirm">
           {{ confirming ? '写入中…' : '确认' }}
         </button>
       </div>
@@ -459,6 +493,16 @@ const jumpToTable = (stage: string): void => {
       <div v-else class="empty-inline">无排除候选</div>
     </section>
   </template>
+
+  <!-- 二次确认总结弹框 -->
+  <dialog ref="summaryDlg" class="confirm-dialog" aria-label="确认范围">
+    <h2>确认范围</h2>
+    <p class="confirm-dialog-text">{{ summaryText }}</p>
+    <div class="confirm-dialog-actions">
+      <button type="button" @click="summaryDlg?.close()">取消</button>
+      <button type="button" class="primary" @click="doConfirm">确认写入</button>
+    </div>
+  </dialog>
 
   <!-- 确认结果弹框 -->
   <dialog ref="dlg" class="confirm-dialog" aria-label="确认结果">
@@ -665,6 +709,13 @@ input[type='checkbox'] {
 
 .confirm-dialog-close {
   float: right;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* 锁定态：禁用控件视觉 */
