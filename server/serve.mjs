@@ -45,7 +45,8 @@ if (!fs.existsSync(dataDir)) {
 }
 
 // ---- --detach：spawn 分离子进程并等待就绪，然后父进程退出 ----
-if (process.argv.includes('--detach')) {
+const isDetach = process.argv.includes('--detach')
+if (isDetach) {
   const root = path.resolve(dataDir)
   const logFile =
     argValue('log-file') ??
@@ -153,7 +154,7 @@ const sseBroadcast = (files) => {
     }
   }
 }
-const heartbeat = setInterval(() => {
+const heartbeat = isDetach ? null : setInterval(() => {
   for (const res of sseClients) {
     try {
       res.write(': ping\n\n')
@@ -162,7 +163,7 @@ const heartbeat = setInterval(() => {
     }
   }
 }, 30000)
-const dataWatcher = api.watch(sseBroadcast)
+const dataWatcher = isDetach ? null : api.watch(sseBroadcast)
 
 const server = http.createServer((req, res) => {
   const sseUrl = new URL(req.url ?? '/', 'http://localhost')
@@ -264,4 +265,8 @@ const listen = (port, attemptsLeft) => {
   server.listen(port, host)
 }
 
-listen(basePort, MAX_PORT_RETRY)
+if (isDetach) {
+  // detach 模式：父进程不启动服务器，生命周期由上方 poll 接管（成功/失败都会 process.exit）
+} else {
+  listen(basePort, MAX_PORT_RETRY)
+}

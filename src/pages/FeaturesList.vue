@@ -24,7 +24,6 @@ const fileMtime = ref<number | null>(null)
 const page = ref(1)
 const pageSize = ref(10)
 const stageFilter = ref('')
-const message = ref('')
 let stop: (() => void) | undefined
 let stopProgress: (() => void) | undefined
 let initialized = false
@@ -211,11 +210,17 @@ const presetActive = (target: string): boolean => {
 const resetDraft = (): void => {
   selected.value = new Set(features.value.filter((f) => f.should_develop).map((f) => fkey(f)))
   priorityDraft.value = {}
-  message.value = ''
 }
 
-/** 确认：写回勾选（implemented）与优先级草稿（release_stage），成功后清草稿；冲突项跳过并提示 */
+/** 确认：写回勾选（implemented）与优先级草稿（release_stage），成功后清草稿；结果弹框提示 */
 const confirming = ref(false)
+const dialogText = ref('')
+const dlg = ref<HTMLDialogElement | null>(null)
+
+const showDialog = (text: string): void => {
+  dialogText.value = text
+  dlg.value?.showModal()
+}
 
 const confirm = async (): Promise<void> => {
   if (locked.value || confirming.value) return
@@ -231,14 +236,16 @@ const confirm = async (): Promise<void> => {
     updates.push({ key: fkey(f), fields })
   }
   confirming.value = true
-  message.value = ''
   try {
     await writeJson(FILE, { expectedMtime: fileMtime.value, updates })
     priorityDraft.value = {}
-    message.value =
-      unstable.size > 0 ? `已写入功能清单（${unstable.size} 项因缺少唯一标识未写入）` : '已写入功能清单'
+    showDialog(
+      unstable.size > 0
+        ? `已写入功能清单（${unstable.size} 项因缺少唯一标识未写入）`
+        : '已写入功能清单',
+    )
   } catch (e) {
-    message.value = e instanceof Error ? e.message : '写入失败'
+    showDialog(e instanceof Error ? e.message : '写入失败')
   } finally {
     confirming.value = false
   }
@@ -332,7 +339,6 @@ const jumpToTable = (stage: string): void => {
         <button type="button" class="primary confirm" :disabled="locked || confirming" @click="confirm">
           {{ confirming ? '写入中…' : '确认' }}
         </button>
-        <span v-if="message" class="confirm-msg" :class="{ error: message.includes('失败') || message.includes('变化') }">{{ message }}</span>
       </div>
 
       <div class="table-wrap">
@@ -453,6 +459,13 @@ const jumpToTable = (stage: string): void => {
       <div v-else class="empty-inline">无排除候选</div>
     </section>
   </template>
+
+  <!-- 确认结果弹框 -->
+  <dialog ref="dlg" class="confirm-dialog" aria-label="确认结果">
+    <h2>功能清单</h2>
+    <p class="confirm-dialog-text">{{ dialogText }}</p>
+    <button type="button" class="primary confirm-dialog-close" @click="dlg?.close()">关闭</button>
+  </dialog>
 </template>
 
 <style scoped>
@@ -612,7 +625,7 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
-/* 确认按钮与结果提示 */
+/* 确认按钮（primary 蓝色） */
 .toolbar button.confirm {
   background: var(--blue);
   color: #fff;
@@ -625,14 +638,33 @@ input[type='checkbox'] {
   cursor: default;
 }
 
-.confirm-msg {
-  font-size: 12px;
-  color: var(--green);
-  white-space: nowrap;
+/* 确认结果弹框（参照参考 HTML dialog 样式） */
+.confirm-dialog {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 90%;
+  padding: 24px;
+  box-shadow: 0 18px 80px #182a4930;
 }
 
-.confirm-msg.error {
-  color: #b14646;
+.confirm-dialog::backdrop {
+  background: #14243c55;
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 10px;
+}
+
+.confirm-dialog-text {
+  font-size: 13px;
+  color: #34445c;
+  overflow-wrap: anywhere;
+  margin: 0 0 18px;
+}
+
+.confirm-dialog-close {
+  float: right;
 }
 
 /* 锁定态：禁用控件视觉 */
@@ -756,10 +788,6 @@ select.prio.modified {
 
   .summary-counts strong {
     font-size: 20px;
-  }
-
-  .confirm-msg {
-    white-space: normal;
   }
 }
 </style>

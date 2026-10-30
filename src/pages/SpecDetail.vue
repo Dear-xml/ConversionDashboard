@@ -124,7 +124,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
                 <small>{{ t.page_id }} · {{ t.spec }}</small>
               </td>
               <td><span class="tag">{{ t.kind ?? UNKNOWN}}</span></td>
-              <td>
+              <td class="score-cell">
                 <strong class="score">{{ t.page_score }}</strong>
                 <small>E{{ t.enablement }} · R{{ t.ordinary_reachability }} · S{{ t.shallowness }}</small>
               </td>
@@ -251,6 +251,11 @@ td .tag {
   font-size: 18px;
   font-weight: 650;
   color: #34445c;
+}
+
+/* 评分列：E·R·S 摘要固定格式，不折行（超出由表格横向滚动兜底） */
+.score-cell {
+  white-space: nowrap;
 }
 
 .empty {
