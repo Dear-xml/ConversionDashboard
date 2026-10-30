@@ -3,8 +3,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 declare module 'vue-router' {
   interface RouteMeta {
     title: string
-    tab: string
-    icon: string
+    /** 主导航 tab 标识；不设则不进入侧栏（如详情页） */
+    tab?: string
+    icon?: string
   }
 }
 
@@ -32,6 +33,12 @@ export const routes = [
     name: 'tasks',
     component: () => import('../pages/SpecDetail.vue'),
     meta: { title: 'Spec 执行', tab: 'tasks', icon: '☑' },
+  },
+  {
+    path: '/tasks/:taskId',
+    name: 'specItemDetail',
+    component: () => import('../pages/SpecItemDetail.vue'),
+    meta: { title: 'Spec 详情' },
   },
   {
     path: '/project',

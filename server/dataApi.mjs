@@ -1,11 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const ALLOWED_EXT = new Set(['.json', '.jsonl'])
+const ALLOWED_EXT = new Set(['.json', '.jsonl', '.md'])
 
 const MIME = {
   '.jsonl': 'application/x-ndjson',
   '.json': 'application/json',
+  '.md': 'text/markdown; charset=utf-8',
 }
 
 /** 会话聚合虚拟文件（前端固定订阅路径） */

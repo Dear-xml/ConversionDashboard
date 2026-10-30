@@ -69,6 +69,11 @@ export async function readFileArrayBuffer(relPath: string, signal?: AbortSignal)
   return res.arrayBuffer()
 }
 
+/** 读取数据目录中任意文本文件（如 spec.md）。 */
+export async function readText(relPath: string, signal?: AbortSignal): Promise<string> {
+  return fetchText(relPath, signal)
+}
+
 /**
  * 写回数据目录中的 JSON（增量合并，仅服务端可写白名单内的文件与字段）。
  * body: { expectedMtime, updates: [{ key, fields: {…} }] }

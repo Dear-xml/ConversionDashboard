@@ -24,7 +24,7 @@ export interface BatchReport {
     kind: string
     page_score: number
     package: string
-    page_path: string
+    page_path: string[]
     dependencies: string[]
     enablement: number
     ordinary_reachability: number
@@ -40,11 +40,11 @@ export interface BatchReport {
     source_snapshot: string | null
     build_evidence: unknown[]
     test_evidence: unknown[]
-    differences: unknown[]
+    differences: string[]
     started_at: string | null
     ended_at: string | null
     updated_at: string | null
-    blockers: unknown[]
+    blockers: string[]
     history: Array<{
       timestamp: string | null
       details: string

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime } from '../utils/datetime'
@@ -8,6 +9,7 @@ import type { BatchReport } from '../types/batchReport'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
 
 const FILE = DATA_FILES.batchReport
+const router = useRouter()
 
 const raw = ref<BatchReport | null>(null)
 const fileMtime = ref<number | null>(null)
@@ -35,7 +37,10 @@ const tasks = computed(() => {
   const q = query.value.trim().toLowerCase()
   return list.filter((t) => {
     const hitQuery =
-      !q || (t.task_id + ' ' + t.page_id + ' ' + t.kind).toLowerCase().includes(q)
+      !q ||
+      (t.task_id + ' ' + t.page_id + ' ' + t.kind + ' ' + (t.page_path ?? []).join('/'))
+        .toLowerCase()
+        .includes(q)
     const hitFilter =
       !filter.value || t.development === filter.value
     return hitQuery && hitFilter
@@ -51,6 +56,11 @@ const pagedTasks = computed(() => {
 
 const goPage = (p: number): void => {
   page.value = Math.min(Math.max(1, p), totalPages.value)
+}
+
+/** 跳转 Spec 详情页 */
+const openDetail = (taskId: string): void => {
+  void router.push({ name: 'specItemDetail', params: { taskId } })
 }
 
 const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
@@ -87,7 +97,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
           v-model="query"
           type="search"
           aria-label="搜索 Spec"
-          placeholder="搜索 task_id / page_id / 类型"
+          placeholder="搜索 task_id / page_id / 路径 / 类型"
           @input="page = 1"
         />
         <select v-model="filter" aria-label="筛选 Spec" @change="page = 1">
@@ -110,6 +120,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
           <thead>
             <tr>
               <th>Spec</th>
+              <th>页面路径</th>
               <th>类型</th>
               <th>评分</th>
               <th>依赖</th>
@@ -118,12 +129,20 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in pagedTasks" :key="t.task_id">
+            <tr
+              v-for="t in pagedTasks"
+              :key="t.task_id"
+              class="row-click"
+              @click="openDetail(t.task_id)"
+            >
               <td class="title">
                 <strong>{{ t.task_id }}</strong>
-                <small>{{ t.page_id }} · {{ t.spec }}</small>
+                <small>{{ t.page_id }}</small>
               </td>
-              <td><span class="tag">{{ t.kind ?? UNKNOWN}}</span></td>
+              <td class="title path-cell">
+                {{ (t.page_path ?? []).join(' / ') || '—' }}
+              </td>
+              <td><span class="tag">{{ t.kind ?? UNKNOWN }}</span></td>
               <td class="score-cell">
                 <strong class="score">{{ t.page_score }}</strong>
                 <small>E{{ t.enablement }} · R{{ t.ordinary_reachability }} · S{{ t.shallowness }}</small>
@@ -245,6 +264,21 @@ td.title {
 
 td .tag {
   margin: 1px 3px 1px 0;
+}
+
+/* 行可点击 */
+.row-click {
+  cursor: pointer;
+}
+
+.row-click:hover td {
+  background: #f7faff;
+}
+
+/* 页面路径列（中文，明确 spec 用途） */
+.path-cell {
+  font-weight: 600;
+  color: #34445c;
 }
 
 .score {
