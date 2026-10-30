@@ -36,7 +36,7 @@ onMounted(() => {
     // 首次加载：勾选状态从「是否实现」字段初始化
     if (!initialized) {
       initialized = true
-      selected.value = new Set(d.features.filter((f) => f.implemented).map((f) => f.capability_key ?? JSON.stringify(f.path)))
+      selected.value = new Set(d.features.filter((f) => f.should_develop).map((f) => f.capability_key ?? JSON.stringify(f.path)))
     }
   })
   stopProgress = onJsonChange<RawProgress>(DATA_FILES.progress, (d) => {
@@ -209,7 +209,7 @@ const presetActive = (target: string): boolean => {
 
 /** 撤回并重载：勾选恢复为「是否实现」字段初始值，清空优先级草稿 */
 const resetDraft = (): void => {
-  selected.value = new Set(features.value.filter((f) => f.implemented).map((f) => fkey(f)))
+  selected.value = new Set(features.value.filter((f) => f.should_develop).map((f) => fkey(f)))
   priorityDraft.value = {}
   message.value = ''
 }

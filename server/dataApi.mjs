@@ -78,7 +78,7 @@ function buildSessionsSummary(sessionDir) {
  * 创建数据目录 API：manifest 扫描 + /api/data/* HTTP 处理 + 文件监听。
  * 供 vite 插件（dev/preview）与独立服务器 server/serve.mjs 共用，零依赖。
  * options.sessionDir：undefined=自动探测（数据目录同级/父级 .harmonybot），null=禁用，字符串=显式指定。
- * options.writable：可写文件白名单 → 允许写入的字段列表（默认仅功能清单的 implemented/release_stage）。
+ * options.writable：可写文件白名单 → 允许写入的字段列表（默认仅功能清单的 should_develop/release_stage）。
  */
 export function createDataApi(dataDir, options = {}) {
   const root = path.resolve(dataDir)
@@ -90,7 +90,7 @@ export function createDataApi(dataDir, options = {}) {
         : path.resolve(options.sessionDir)
 
   const writable =
-    options.writable ?? { 'feature-analysis/inventory.json': ['implemented', 'release_stage'] }
+    options.writable ?? { 'feature-analysis/inventory.json': ['should_develop', 'release_stage'] }
 
   const sessionsSummary = () => (sessionDir ? buildSessionsSummary(sessionDir) : null)
 

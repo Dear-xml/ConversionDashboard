@@ -9,6 +9,7 @@ import type { RawProgress } from '../types/progress'
 import type { BatchReport } from '../types/batchReport'
 import type { FeatureInventory } from '../types/inventory'
 import type { SessionSummary } from '../types/sessionSummary'
+import type { PreflightReport } from '../types/preflight'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
 
 const raw = ref<RawProgress | null>(null)
@@ -16,10 +17,12 @@ const progressMtime = ref<number | null>(null)
 const batch = ref<BatchReport | null>(null)
 const inventory = ref<FeatureInventory | null>(null)
 const sessions = ref<SessionSummary | null>(null)
+const preflight = ref<PreflightReport | null>(null)
 let stop: (() => void) | undefined
 let stopBatch: (() => void) | undefined
 let stopInventory: (() => void) | undefined
 let stopSessions: (() => void) | undefined
+let stopPreflight: (() => void) | undefined
 
 onMounted(() => {
   stop = onJsonChange<RawProgress>(DATA_FILES.progress, (data, meta) => {
@@ -35,6 +38,9 @@ onMounted(() => {
   stopSessions = onJsonChange<SessionSummary>(DATA_FILES.sessions, (data) => {
     sessions.value = data
   })
+  stopPreflight = onJsonChange<PreflightReport>(DATA_FILES.preflight, (data) => {
+    preflight.value = data
+  })
 })
 
 onUnmounted(() => {
@@ -42,6 +48,7 @@ onUnmounted(() => {
   stopBatch?.()
   stopInventory?.()
   stopSessions?.()
+  stopPreflight?.()
 })
 
 const summary = computed(() => raw.value?.summary ?? null)
@@ -97,6 +104,16 @@ const invStats = computed(() => {
   for (const f of list) stats[f.release_stage] = (stats[f.release_stage] ?? 0) + 1
   return { total: list.length, mvp: stats['mvp'] ?? 0, core: stats['core'] ?? 0, full: stats['full'] ?? 0 }
 })
+
+// 工程与环境（preflight-report.json）
+const preflightStats = computed(() => {
+  const checks = preflight.value?.checks ?? []
+  const counts: Record<string, number> = {}
+  for (const c of checks) counts[c.status] = (counts[c.status] ?? 0) + 1
+  return { total: checks.length, passed: counts['passed'] ?? 0, failed: counts['failed'] ?? 0, skipped: counts['skipped'] ?? 0, notApplicable: counts['not_applicable'] ?? 0 }
+})
+
+const stageRunning = computed(() => currentStage.value?.status === 'in_progress')
 </script>
 
 <template>
@@ -170,11 +187,16 @@ const invStats = computed(() => {
         <template v-if="currentStage">
           <div class="current-brief">
             <div class="row">
-              <strong class="current-title">{{ currentStage.name }}</strong>
+              <strong class="current-title">
+                <i v-if="stageRunning" class="live-dot"></i>{{ currentStage.name }}
+              </strong>
               <span class="tag blue">{{ currentStage.status ?? UNKNOWN }}</span>
             </div>
             <small v-if="currentStage.startedAt">{{ stageStarted(currentStage.startedAt) }}</small>
             <small v-else>尚未开始</small>
+            <div v-if="stageRunning" class="activity-rail is-active is-indeterminate" role="progressbar" aria-label="阶段进行中">
+              <i></i>
+            </div>
           </div>
         </template>
         <div v-else class="idle-task">
@@ -216,31 +238,40 @@ const invStats = computed(() => {
       <section class="panel span-6">
         <div class="row">
           <h2><span class="section-index">03</span>安卓工程</h2>
-          <button type="button" class="link">工程详情 →</button>
+          <button type="button" class="link" @click="jumpToDetail('project')">工程详情 →</button>
         </div>
-        <div class="project-metrics">
-          <div><strong>—</strong><small>源文件</small></div>
-          <div><strong>—</strong><small>物理行数</small></div>
-          <div><strong>—</strong><small>已记录依赖</small></div>
-        </div>
-        <div class="stack-pills"><small>技术栈未采集</small></div>
-        <small>尚未接入工程概览报告</small>
+        <template v-if="preflight">
+          <div class="project-metrics">
+            <div><strong>{{ preflightStats.passed }}/{{ preflightStats.total }}</strong><small>预检通过</small></div>
+          </div>
+          <div class="stack-pills">
+            <span class="tag">git {{ (preflight.gitHead ?? UNKNOWN).slice(0, 7) }}</span>
+          </div>
+          <small>{{ preflight.projectRoot }}</small>
+        </template>
+        <template v-else>
+          <div class="project-metrics">
+            <div><strong>—</strong><small>预检状态</small></div>
+          </div>
+          <div class="stack-pills"><small>尚未载入预检报告</small></div>
+        </template>
       </section>
 
       <section class="panel span-6">
         <div class="row">
           <h2>环境检查</h2>
-          <button type="button" class="link">检查详情 →</button>
+          <button type="button" class="link" @click="jumpToDetail('project')">检查详情 →</button>
         </div>
         <div class="environment-summary">
-          <div><strong>—</strong><small>通过</small></div>
-          <div><strong>—</strong><small>失败</small></div>
-          <div><strong>—</strong><small>缺失</small></div>
-          <div><strong>—</strong><small>未检查</small></div>
+          <div><strong>{{ preflight ? preflightStats.passed : '—' }}</strong><small>通过</small></div>
+          <div><strong>{{ preflight ? preflightStats.failed : '—' }}</strong><small>失败</small></div>
+          <div><strong>{{ preflight ? preflightStats.skipped : '—' }}</strong><small>跳过</small></div>
+          <div><strong>{{ preflight ? preflightStats.notApplicable : '—' }}</strong><small>不适用</small></div>
         </div>
         <div class="row">
-          <small>尚未载入环境检查报告</small>
-          <span class="tag orange">未载入报告</span>
+          <small>{{ preflight ? `git ${preflight.gitHead ?? UNKNOWN}` : '尚未载入环境检查报告' }}</small>
+          <span v-if="preflight" class="tag" :class="preflight.result === 'passed' ? 'green' : 'orange'">{{ preflight.result ?? UNKNOWN }}</span>
+          <span v-else class="tag orange">未载入报告</span>
         </div>
       </section>
     </div>
@@ -513,6 +544,48 @@ const invStats = computed(() => {
   display: block;
   margin-top: 2px;
   overflow-wrap: anywhere;
+}
+
+/* 当前任务进行中：不确定进度条动效（参照参考 HTML activity-rail） */
+.activity-rail {
+  height: 7px;
+  background: #edf1f7;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 12px 0 4px;
+}
+
+.activity-rail i {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 8px;
+}
+
+.activity-rail.is-indeterminate i {
+  width: 35%;
+  opacity: 0;
+}
+
+.activity-rail.is-active.is-indeterminate i {
+  opacity: 1;
+  animation: d2h-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes d2h-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(390%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-rail i {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 .idle-task {

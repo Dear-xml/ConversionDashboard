@@ -70,7 +70,43 @@ const STATIC_MIME = {
 // 服务器脚本与包描述不作为静态资源对外暴露
 const BLOCKED_STATIC = new Set(['/serve.mjs', '/dataApi.mjs', '/package.json'])
 
+// ---- SSE 实时推送：文件变化 → /api/data/events 广播 ----
+const sseClients = new Set()
+const sseBroadcast = (files) => {
+  const msg = `data: ${JSON.stringify({ files })}\n\n`
+  for (const res of sseClients) {
+    try {
+      res.write(msg)
+    } catch {
+      sseClients.delete(res)
+    }
+  }
+}
+const heartbeat = setInterval(() => {
+  for (const res of sseClients) {
+    try {
+      res.write(': ping\n\n')
+    } catch {
+      sseClients.delete(res)
+    }
+  }
+}, 30000)
+const dataWatcher = api.watch(sseBroadcast)
+
 const server = http.createServer((req, res) => {
+  const sseUrl = new URL(req.url ?? '/', 'http://localhost')
+  if (sseUrl.pathname === '/api/data/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+    res.write(': connected\n\n')
+    sseClients.add(res)
+    req.on('close', () => sseClients.delete(res))
+    return
+  }
+
   if (api.handle(req, res)) return
 
   const url = new URL(req.url ?? '/', 'http://localhost')
@@ -124,6 +160,19 @@ server.once('listening', () => {
   })
   console.log(`[dashboard] dataDir=${api.root}`)
   console.log(`[dashboard] http://${host}:${server.address().port}`)
+})
+
+server.on('close', () => {
+  dataWatcher?.close()
+  clearInterval(heartbeat)
+  for (const res of sseClients) {
+    try {
+      res.end()
+    } catch {
+      /* ignore */
+    }
+  }
+  sseClients.clear()
 })
 
 const listen = (port, attemptsLeft) => {

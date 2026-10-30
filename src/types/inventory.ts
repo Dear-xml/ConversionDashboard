@@ -23,8 +23,8 @@ export interface FeatureInventory {
     /** 可选：仅用于跨入口能力去重（上游 inventory-schema）；缺失时前端以 JSON.stringify(path) 兜底作唯一 key */
     capability_key?: string
     notes: string
-    /** 是否实现（上游 schema 定名，见 constants/common.ts FEATURE_IMPLEMENTED_FIELD） */
-    implemented?: boolean
+    /** 是否纳入开发（对应页面勾选；schema 1.2 字段名 should_develop） */
+    should_develop?: boolean
     implementations: Record<
       string,
       {

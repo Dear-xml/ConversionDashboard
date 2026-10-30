@@ -17,8 +17,8 @@ export const DATA_FILES = {
   preflight: 'preflight-report.json',
 } as const
 
-/** 功能清单「是否实现」字段名（上游 schema 定名后仅改此处） */
-export const FEATURE_IMPLEMENTED_FIELD = 'implemented'
+/** 功能清单「是否实现/是否纳入开发」字段名（对应页面勾选，上游 schema 1.2 已定名） */
+export const FEATURE_IMPLEMENTED_FIELD = 'should_develop'
 
 /** 进入该阶段后功能清单锁定（progress.json 的 stage id） */
 export const FEATURE_LOCK_STAGE = 'code-conversion'

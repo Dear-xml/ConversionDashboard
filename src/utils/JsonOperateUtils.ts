@@ -16,9 +16,31 @@ export interface ChangeMeta {
   mtimeMs?: number
 }
 
-export const DEFAULT_POLL_MS = 300_000
+/** 兜底轮询间隔：SSE 推送正常时几乎不触发；SSE 断开/不可用时按此间隔降级刷新 */
+export const DEFAULT_POLL_MS = 10_000
 
 const DATA_BASE = '/api/data'
+
+// ---- SSE 实时推送（dist/serve 模式；dev 走 Vite WS，不建 SSE） ----
+let sharedSse: EventSource | null = null
+const sseSubs = new Set<{ relPath: string; trigger: () => void }>()
+
+function ensureSse(): void {
+  if (sharedSse || import.meta.hot || typeof EventSource === 'undefined') return
+  sharedSse = new EventSource(`${DATA_BASE}/events`)
+  sharedSse.onmessage = (ev: MessageEvent<string>): void => {
+    try {
+      const { files } = JSON.parse(ev.data) as { files?: string[] }
+      if (!Array.isArray(files)) return
+      for (const sub of sseSubs) {
+        if (files.includes(sub.relPath)) sub.trigger()
+      }
+    } catch {
+      // 非 JSON 事件体（如心跳注释），忽略
+    }
+  }
+  // onerror 不处理：EventSource 自动重连；期间由兜底轮询覆盖
+}
 
 function isJsonl(relPath: string): boolean {
   return relPath.toLowerCase().endsWith('.jsonl')
@@ -105,7 +127,8 @@ export async function readJson<T = unknown>(relPath: string, signal?: AbortSigna
 
 /**
  * 监听数据目录中任意文件的变化，变化时回调其原始二进制。
- * dev 下走 Vite WS 推送（毫秒级）；WS 不可用或 preview 时退化为轮询 manifest 对比。
+ * dev 走 Vite WS 推送；dist/serve 走 SSE 推送（/api/data/events）；
+ * 两者均不可用时按 pollMs 轮询 manifest 对比兜底。
  * 返回取消订阅函数。
  */
 export function onFileChange(
@@ -157,11 +180,17 @@ export function onFileChange(
   }
   hot?.on('dashboard:data-changed', onHot)
 
+  // SSE 订阅注册（dist 模式实时推送；与 dev 的 Vite WS 互斥）
+  const sub = { relPath, trigger: () => void check() }
+  sseSubs.add(sub)
+  ensureSse()
+
   if (immediate) void check()
   timer = setInterval(() => void check(), pollMs)
 
   return () => {
     disposed = true
+    sseSubs.delete(sub)
     if (timer) clearInterval(timer)
     ctrl?.abort()
     hot?.off('dashboard:data-changed', onHot)
