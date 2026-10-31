@@ -13,5 +13,9 @@ export interface DataApi {
 
 export declare function createDataApi(
   dataDir: string,
-  options?: { sessionDir?: string | null; writable?: Record<string, string[]> },
+  options?: {
+    sessionDir?: string | null
+    /** string[]＝feature 增量更新模式；{ mode: 'patch', fields }＝顶层字段补丁模式 */
+    writable?: Record<string, string[] | { mode: 'patch'; fields: string[] }>
+  },
 ): DataApi

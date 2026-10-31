@@ -102,6 +102,30 @@ export async function writeJson(
   return res.json()
 }
 
+/**
+ * 写回数据目录中的 JSON（顶层字段补丁，仅服务端白名单 patch 模式文件可用）。
+ * body: { expectedMtime, patch: { 字段: 值 } }
+ * 返回服务端 { updated }；409 冲突时抛「数据已变化」。
+ */
+export async function writeJsonPatch(
+  relPath: string,
+  body: { expectedMtime?: number | null; patch: Record<string, unknown> },
+  signal?: AbortSignal,
+): Promise<{ updated: number }> {
+  const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    signal,
+    body: JSON.stringify(body),
+  })
+  if (res.status === 409) throw new Error('数据已变化，请刷新后重试')
+  if (res.status === 403) throw new Error('该文件不可写')
+  if (!res.ok) throw new Error(`写入失败 (HTTP ${res.status})`)
+  return res.json()
+}
+
 async function fetchText(relPath: string, signal?: AbortSignal): Promise<string> {
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
   const res = await fetch(url, { cache: 'no-store', signal })

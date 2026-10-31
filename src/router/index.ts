@@ -17,16 +17,16 @@ export const routes = [
     meta: { title: '迁移总览', tab: 'overview', icon: '◫' },
   },
   {
-    path: '/analysis',
-    name: 'analysis',
-    component: () => import('../pages/Analysis.vue'),
-    meta: { title: '分析与报告', tab: 'analysis', icon: '⌕' },
-  },
-  {
     path: '/features',
     name: 'features',
     component: () => import('../pages/FeaturesList.vue'),
     meta: { title: '功能清单', tab: 'features', icon: '☷' },
+  },
+  {
+    path: '/analysis',
+    name: 'analysis',
+    component: () => import('../pages/Analysis.vue'),
+    meta: { title: '架构分析与设计', tab: 'analysis', icon: '⌕' },
   },
   {
     path: '/tasks',

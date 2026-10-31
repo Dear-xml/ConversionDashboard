@@ -220,3 +220,57 @@ p {
   font-size: 28px;
   color: #8b9ab2;
 }
+
+/* 确认类弹框（全局共用，各页面 dialog.confirm-dialog 直接复用） */
+.confirm-dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  max-width: 480px;
+  width: 90%;
+  padding: 22px 24px 18px;
+  box-shadow: 0 24px 90px #182a4940;
+}
+
+.confirm-dialog::backdrop {
+  background: #14243c66;
+  backdrop-filter: blur(2px);
+}
+
+.confirm-dialog[open] {
+  animation: confirm-dialog-pop 0.18s ease;
+}
+
+@keyframes confirm-dialog-pop {
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.confirm-dialog-text {
+  font-size: 13px;
+  color: #34445c;
+  overflow-wrap: anywhere;
+  margin: 0 0 18px;
+  line-height: 1.6;
+}
+
+.confirm-dialog-close {
+  float: right;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.confirm-dialog-actions button {
+  min-width: 84px;
+}

@@ -682,41 +682,7 @@ input[type='checkbox'] {
   cursor: default;
 }
 
-/* 确认结果弹框（参照参考 HTML dialog 样式） */
-.confirm-dialog {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  max-width: 480px;
-  width: 90%;
-  padding: 24px;
-  box-shadow: 0 18px 80px #182a4930;
-}
-
-.confirm-dialog::backdrop {
-  background: #14243c55;
-}
-
-.confirm-dialog h2 {
-  margin: 0 0 10px;
-}
-
-.confirm-dialog-text {
-  font-size: 13px;
-  color: #34445c;
-  overflow-wrap: anywhere;
-  margin: 0 0 18px;
-}
-
-.confirm-dialog-close {
-  float: right;
-}
-
-.confirm-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
+/* 确认弹框样式已提升至全局 style.css（.confirm-dialog*），本页直接复用 */
 
 /* 锁定态：禁用控件视觉 */
 .toolbar button:disabled,

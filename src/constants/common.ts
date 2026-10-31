@@ -15,6 +15,8 @@ export const DATA_FILES = {
   sessions: '.harmonybot/_summary.json',
   /** 工程与环境预检报告 */
   preflight: 'preflight-report.json',
+  /** 架构分析与设计规划（三套结构方案与选型） */
+  architecturePlan: 'architecture-plan/architecture-plan.json',
 } as const
 
 /** 功能清单「是否实现/是否纳入开发」字段名（对应页面勾选，上游 schema 1.2 已定名） */
