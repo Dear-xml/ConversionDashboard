@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { createDataApi, type DataApi } from './server/dataApi.mjs'
@@ -11,6 +13,49 @@ function argValue(name: string): string | undefined {
     if (a.startsWith(`--${name}=`)) return a.slice(name.length + 3)
   }
   return undefined
+}
+
+const ICON_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
+/** 应用图标端点：--icon / DASHBOARD_ICON（本地路径或 URL），未配置返回 404 由前端回退文字品牌 */
+function appIcon(iconArg: string | undefined): Plugin {
+  return {
+    name: 'dashboard-app-icon',
+    configureServer(server) {
+      server.middlewares.use('/app-icon', (_req, res) => {
+        if (!iconArg) {
+          res.statusCode = 404
+          res.end('not found')
+          return
+        }
+        if (/^https?:\/\//i.test(iconArg)) {
+          res.statusCode = 302
+          res.setHeader('Location', iconArg)
+          res.end()
+          return
+        }
+        const abs = path.resolve(iconArg)
+        fs.readFile(abs, (err, data) => {
+          if (err) {
+            res.statusCode = 404
+            res.end('not found')
+            return
+          }
+          res.statusCode = 200
+          res.setHeader('Content-Type', ICON_MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(data)
+        })
+      })
+    },
+  }
 }
 
 function dashboardData(api: DataApi): Plugin {
@@ -45,6 +90,7 @@ export default defineConfig(({ mode, command }) => {
     process.env.npm_config_dataDir ??
     process.env.DASHBOARD_DATA_DIR ??
     env.DASHBOARD_DATA_DIR
+  const icon = argValue('icon') ?? process.env.DASHBOARD_ICON ?? env.DASHBOARD_ICON
 
   // build 不需要数据目录；dev/preview 缺参时 fail fast
   if (!dataDir && command !== 'build') {
@@ -56,6 +102,9 @@ export default defineConfig(({ mode, command }) => {
   const plugins: Plugin[] = [vue()]
   if (dataDir) {
     plugins.push(dashboardData(createDataApi(dataDir)))
+  }
+  if (command !== 'build') {
+    plugins.push(appIcon(icon))
   }
   return { plugins }
 })

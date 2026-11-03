@@ -1,10 +1,20 @@
 <script setup lang="ts">
-defineProps<{ title?: string }>()
+import type { AppMeta } from '../utils/appMeta'
+
+defineProps<{ title?: string; appMeta?: AppMeta | null }>()
 </script>
 
 <template>
   <header class="topbar">
-    <strong>{{ title ?? '迁移工作台' }}</strong>
+    <strong class="topbar-title">
+      {{ title ?? '迁移工作台' }}
+      <span
+        v-if="appMeta?.projectName"
+        class="project-name"
+        :title="appMeta.projectPath ?? appMeta.projectName"
+      >· {{ appMeta.projectName }}</span>
+    </strong>
+    <slot />
   </header>
 </template>
 
@@ -19,13 +29,16 @@ defineProps<{ title?: string }>()
   justify-content: space-between;
   gap: 12px;
 }
-.topbar strong {
+.topbar-title {
   font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.project-name {
+  font-weight: 500;
+  color: var(--muted);
 }
 @media (max-width: 700px) {
   .topbar {

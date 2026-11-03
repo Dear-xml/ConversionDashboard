@@ -6,7 +6,7 @@ import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange, readText } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime, formatTime } from '../utils/datetime'
 import { jumpToDetail } from '../utils/navigation'
-import { DEVELOPMENT_TONE, RUN_TONE, type Tone } from '../constants/batchReport'
+import { DEVELOPMENT_TONE, RUN_TONE, pagePathText, type Tone } from '../constants/batchReport'
 import type { BatchReport } from '../types/batchReport'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
 
@@ -38,9 +38,9 @@ const task = computed<Task | null>(() => {
 
 const updatedText = computed(() => resolveUpdatedTime(raw.value, fileMtime.value))
 
-/** 页面中文路径标题（page_path），无则回退 page_id */
+/** 页面路径标题（数组 join / 字符串原样），无则回退 page_id */
 const pageTitle = computed(
-  () => task.value?.page_path?.join(' / ') || task.value?.page_id || taskId.value,
+  () => pagePathText(task.value?.page_path) || task.value?.page_id || taskId.value,
 )
 
 // 按需加载 spec.md（page-specs/<package>/spec.md）

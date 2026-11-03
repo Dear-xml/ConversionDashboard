@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
 import { resolveUpdatedTime } from '../utils/datetime'
-import { DEVELOPMENT_TONE, RUN_TONE, type Tone } from '../constants/batchReport'
+import { DEVELOPMENT_TONE, RUN_TONE, pagePathText, type Tone } from '../constants/batchReport'
 import type { BatchReport } from '../types/batchReport'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
 
@@ -38,7 +38,7 @@ const tasks = computed(() => {
   return list.filter((t) => {
     const hitQuery =
       !q ||
-      (t.task_id + ' ' + t.page_id + ' ' + t.kind + ' ' + (t.page_path ?? []).join('/'))
+      (t.task_id + ' ' + t.page_id + ' ' + t.kind + ' ' + pagePathText(t.page_path))
         .toLowerCase()
         .includes(q)
     const hitFilter =
@@ -104,6 +104,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
           <option value="">全部 Spec</option>
           <option value="pending">pending</option>
           <option value="in_progress">in_progress</option>
+          <option value="implemented">implemented</option>
           <option value="completed">completed</option>
           <option value="blocked">blocked</option>
           <option value="failed">failed</option>
@@ -140,7 +141,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
                 <small>{{ t.page_id }}</small>
               </td>
               <td class="title path-cell">
-                {{ (t.page_path ?? []).join(' / ') || '—' }}
+                {{ pagePathText(t.page_path) || '—' }}
               </td>
               <td><span class="tag">{{ t.kind ?? UNKNOWN }}</span></td>
               <td class="score-cell">

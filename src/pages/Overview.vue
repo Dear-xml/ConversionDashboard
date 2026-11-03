@@ -1,10 +1,12 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
 import { formatTime, formatDuration, resolveUpdatedTime } from '../utils/datetime'
 import { formatTokens } from '../utils/format'
 import { jumpToDetail, stageToTab } from '../utils/navigation'
+import { pagePathText } from '../constants/batchReport'
 import type { RawProgress } from '../types/progress'
 import type { BatchReport } from '../types/batchReport'
 import type { FeatureInventory } from '../types/inventory'
@@ -114,6 +116,17 @@ const preflightStats = computed(() => {
 })
 
 const stageRunning = computed(() => currentStage.value?.status === 'in_progress')
+
+const router = useRouter()
+
+/** 当前执行中的具体任务（batch_report 的 in_progress），显示在当前阶段下方 */
+const runningTasks = computed(() =>
+  (batch.value?.tasks ?? []).filter((t) => t.development === 'in_progress'),
+)
+
+const openSpec = (taskId: string): void => {
+  void router.push({ name: 'specItemDetail', params: { taskId } })
+}
 </script>
 
 <template>
@@ -198,10 +211,25 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
               <i></i>
             </div>
           </div>
+          <div v-if="runningTasks.length" class="running-tasks">
+            <small class="running-label">执行中任务</small>
+            <button
+              v-for="t in runningTasks.slice(0, 3)"
+              :key="t.task_id"
+              type="button"
+              class="running-task"
+              :title="pagePathText(t.page_path) || t.page_id"
+              @click="openSpec(t.task_id)"
+            >
+              <span class="running-id">{{ t.task_id }}</span>
+              <span class="running-name">{{ pagePathText(t.page_path) || t.page_id }}</span>
+              <span class="tag blue">{{ t.development }}</span>
+            </button>
+            <small v-if="runningTasks.length > 3">另有 {{ runningTasks.length - 3 }} 个…</small>
+          </div>
         </template>
         <div v-else class="idle-task">
           <span>当前无在途阶段</span>
-          <small>正在读取 {{ DATA_FILES.progress }}…</small>
         </div>
       </section>
 
@@ -597,6 +625,57 @@ const stageRunning = computed(() => currentStage.value?.status === 'in_progress'
   justify-content: center;
   gap: 7px;
   color: #65758d;
+}
+
+/* 当前阶段下方：执行中任务列表（点击跳 Spec 详情） */
+.running-tasks {
+  border-top: 1px solid #edf0f4;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.running-label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.running-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  padding: 7px 8px;
+  margin: 0;
+  text-align: left;
+  font-size: 12px;
+  color: #34445c;
+}
+
+.running-task:hover {
+  background: #f0f5ff;
+  border-color: transparent;
+}
+
+.running-id {
+  color: var(--blue);
+  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.running-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #41536e;
 }
 
 /* 第三层：工程与环境 */

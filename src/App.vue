@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
 import SideBar from './components/SideBar.vue'
 import AppHeader from './components/AppHeader.vue'
+import { fetchAppMeta, type AppMeta } from './utils/appMeta'
 
 const STORAGE_KEY = 'd2h.sidebar.collapsed'
 
@@ -14,12 +15,20 @@ const toggleSidebar = (): void => {
   collapsed.value = !collapsed.value
   localStorage.setItem(STORAGE_KEY, collapsed.value ? '1' : '0')
 }
+
+const appMeta = ref<AppMeta | null>(null)
+
+onMounted(() => {
+  void fetchAppMeta().then((meta) => {
+    appMeta.value = meta
+  })
+})
 </script>
 
 <template>
-  <SideBar :collapsed="collapsed" @toggle="toggleSidebar" />
+  <SideBar :collapsed="collapsed" :app-meta="appMeta" @toggle="toggleSidebar" />
   <div class="shell" :class="{ collapsed }">
-    <AppHeader />
+    <AppHeader :app-meta="appMeta" />
     <main class="content">
       <RouterView />
     </main>

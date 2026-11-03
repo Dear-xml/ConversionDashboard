@@ -2,8 +2,9 @@
 import { RouterLink, useRoute } from 'vue-router'
 import { routes } from '../router'
 import { DATA_FILES } from '../constants/common'
+import type { AppMeta } from '../utils/appMeta'
 
-defineProps<{ collapsed: boolean }>()
+defineProps<{ collapsed: boolean; appMeta?: AppMeta | null }>()
 defineEmits<{ toggle: [] }>()
 
 const route = useRoute()
@@ -22,9 +23,17 @@ const tabs = routes
       <span class="collapse-icon">{{ collapsed ? '»' : '«' }}</span>
     </button>
 
-    <div class="brand" :title="collapsed ? 'd2h workbench' : undefined">
-      <span class="brand-logo"><b>d2h</b></span>
-      <span class="brand-text">workbench</span>
+    <div class="app-logo">
+      <img v-if="appMeta?.iconUrl" :src="appMeta.iconUrl" class="app-img" alt="应用图标" />
+      <svg v-else class="app-icon" viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="7" fill="#3766dc" />
+        <path d="M8 18 L14 10 L20 18" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="14" cy="10" r="1.8" fill="#fff" />
+      </svg>
+    </div>
+
+    <div class="brand">
+      <span class="brand-title"><b>d2h</b> workbench</span>
       <small class="brand-sub">SPEC PLAN / DELIVERY</small>
     </div>
 
@@ -90,11 +99,25 @@ const tabs = routes
   font-size: 30px;
 }
 
+/* 应用图标：独立一行置顶（--icon 配置时为自定义图片，否则内置默认） */
+.app-logo {
+  padding: 2px 10px 10px;
+}
+
+.app-icon,
+.app-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: block;
+}
+
+.app-img {
+  object-fit: contain;
+}
+
 .brand {
-  font-size: 20px;
-  font-weight: 750;
-  letter-spacing: -1px;
-  padding: 8px 10px 0;
+  padding: 0 10px 0;
   white-space: nowrap;
 }
 
@@ -102,29 +125,29 @@ const tabs = routes
   color: var(--blue);
 }
 
-.brand-text,
-.brand-sub {
-  display: inline-block;
+.brand-title {
+  display: block;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.8px;
 }
 
-.brand small {
+.brand-sub {
   display: block;
   font-size: 11px;
   color: var(--muted);
   font-weight: 500;
   letter-spacing: 1.6px;
-  margin: 2px 0 24px;
+  margin-top: 1px;
 }
 
-/* 收缩态品牌：只留 d2h 标识 */
-.sidebar.collapsed .brand {
-  padding: 8px 0 0;
+/* 收缩态：图标居中，文字隐藏 */
+.sidebar.collapsed .app-logo {
+  padding: 4px 0 8px;
   text-align: center;
-  font-size: 15px;
 }
 
-.sidebar.collapsed .brand-text,
-.sidebar.collapsed .brand-sub {
+.sidebar.collapsed .brand {
   display: none;
 }
 

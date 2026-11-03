@@ -24,7 +24,7 @@ export interface BatchReport {
     kind: string
     page_score: number
     package: string
-    page_path: string[]
+    page_path: string | string[]
     dependencies: string[]
     enablement: number
     ordinary_reachability: number

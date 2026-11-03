@@ -165,8 +165,46 @@ const heartbeat = isDetach ? null : setInterval(() => {
 }, 30000)
 const dataWatcher = isDetach ? null : api.watch(sseBroadcast)
 
+// --icon 可选：应用图标（本地 png/svg/jpg 路径或 http(s) URL），未传则 /app-icon 返回 404（前端回退文字品牌）
+const iconArg = argValue('icon')
+const ICON_MIME = { '.png': 'image/png', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
+const iconAbs = iconArg && !/^https?:\/\//i.test(iconArg) ? path.resolve(iconArg) : null
+if (iconArg && !iconAbs && !/^https?:\/\//i.test(iconArg)) {
+  console.error(`[dashboard] --icon 仅支持本地文件路径或 http(s) URL: ${iconArg}`)
+  process.exit(1)
+}
+if (iconAbs && !fs.existsSync(iconAbs)) {
+  console.error(`[dashboard] --icon 文件不存在: ${iconAbs}`)
+  process.exit(1)
+}
+
 const server = http.createServer((req, res) => {
   const sseUrl = new URL(req.url ?? '/', 'http://localhost')
+  if (sseUrl.pathname === '/app-icon') {
+    if (!iconArg) {
+      res.statusCode = 404
+      res.end('not found')
+      return
+    }
+    if (iconAbs) {
+      fs.readFile(iconAbs, (err, data) => {
+        if (err) {
+          res.statusCode = 500
+          res.end('error')
+          return
+        }
+        res.statusCode = 200
+        res.setHeader('Content-Type', ICON_MIME[path.extname(iconAbs).toLowerCase()] ?? 'application/octet-stream')
+        res.setHeader('Cache-Control', 'no-store')
+        res.end(data)
+      })
+    } else {
+      res.statusCode = 302
+      res.setHeader('Location', iconArg)
+      res.end()
+    }
+    return
+  }
   if (sseUrl.pathname === '/api/data/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
