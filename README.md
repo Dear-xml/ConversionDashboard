@@ -42,10 +42,30 @@ npm run dev
 | 命令 | 说明 |
 | --- | --- |
 | `npm run build` | 构建前端产物到 `dist/`（不需要数据目录） |
-| `npm run serve -- --dataDir <path>` | 用 `dist/` + 零依赖服务器起服务（轮询刷新，dist/skill 模式） |
+| `npm run serve -- --dataDir <path>` | 用 `dist/` + 零依赖服务器起服务（SSE 实时推送） |
 | `npm run preview:data -- --dataDir <path>` | 构建产物 + vite 预览 |
 | `npm run release -- --target <path>` | 构建并发布到 skill 资产目录 |
 | `npm publish` | 发布 npm 包（`d2h-dashboard`，自动先 `build`） |
+
+## 应用图标（可选）
+
+侧栏左上角默认显示内置 d2h 图标；可通过 `--icon` 参数替换为自定义应用图标（本地 png/svg/jpg/webp/gif 路径或 http(s) URL），未配置时保持默认。
+
+```bash
+# dist / skill 模式（serve.mjs）
+npx --yes d2h-dashboard@latest --dataDir <project>/.migration --icon <图标路径或URL>
+node server/serve.mjs --dataDir <project>/.migration --icon D:\icons\my-app.png
+
+# dev 模式（vite）：CLI 参数或 DASHBOARD_ICON 环境变量
+npm run dev:data -- --dataDir <project>/.migration --icon <图标路径>
+# 或 $env:DASHBOARD_ICON = "<图标路径>" 后 npm run dev
+```
+
+- 本地文件：serve 读取后经 `GET /app-icon` 提供原图（no-store）
+- http(s) URL：`/app-icon` 302 重定向到目标地址
+- 前端探测 `/app-icon`：200 显示自定义图标，404 回退内置默认
+
+另外，顶栏自动显示项目名称（取 `manifest.root` 去掉 `.migration` 的末级目录名，hover 可见完整路径），无需配置。
 
 ## 数据契约
 
