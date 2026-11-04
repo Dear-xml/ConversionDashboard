@@ -79,9 +79,7 @@ function buildSessionsSummary(sessionDir) {
  * 创建数据目录 API：manifest 扫描 + /api/data/* HTTP 处理 + 文件监听。
  * 供 vite 插件（dev/preview）与独立服务器 server/serve.mjs 共用，零依赖。
  * options.sessionDir：undefined=自动探测（数据目录同级/父级 .harmonybot），null=禁用，字符串=显式指定。
- * options.writable：可写文件白名单。条目为 string[] 时按 feature 增量更新（默认功能清单的
- * should_develop/release_stage）；为 { mode: 'patch', fields } 时写顶层字段（默认架构规划的
- * selectedProposalId/selection）。
+ * options.writable：可写文件白名单 → 允许写入的字段列表（默认仅功能清单的 should_develop/release_stage）。
  */
 export function createDataApi(dataDir, options = {}) {
   const root = path.resolve(dataDir)
@@ -92,15 +90,8 @@ export function createDataApi(dataDir, options = {}) {
         ? null
         : path.resolve(options.sessionDir)
 
-  // 条目形态：string[]＝按 feature 增量更新（inventory）；{ mode: 'patch', fields }＝顶层字段补丁（architecture-plan）
   const writable =
-    options.writable ?? {
-      'feature-analysis/inventory.json': ['should_develop', 'release_stage'],
-      'architecture-plan/architecture-plan.json': {
-        mode: 'patch',
-        fields: ['selectedProposalId', 'selection'],
-      },
-    }
+    options.writable ?? { 'feature-analysis/inventory.json': ['should_develop', 'release_stage'] }
 
   const sessionsSummary = () => (sessionDir ? buildSessionsSummary(sessionDir) : null)
 
@@ -157,8 +148,7 @@ export function createDataApi(dataDir, options = {}) {
         return true
       }
 
-      // 写接口：POST /api/data/file?p=<可写文件>
-      // feature 模式 body { expectedMtime, updates: [{ key, fields }] }；patch 模式 body { expectedMtime, patch: { 字段: 值 } }
+      // 写接口：POST /api/data/file?p=<可写文件>，body { expectedMtime, updates: [{ key, fields }] }
       if (req.method === 'POST' || req.method === 'PUT') {
         const rule = writable[p]
         if (!rule) {
@@ -166,8 +156,7 @@ export function createDataApi(dataDir, options = {}) {
           res.end('forbidden')
           return true
         }
-        const allowedFields = Array.isArray(rule) ? rule : rule.fields
-        const patchMode = !Array.isArray(rule) && rule.mode === 'patch'
+        const allowedFields = rule
         const abs = path.resolve(root, p)
         if (abs !== root && !abs.startsWith(root + path.sep)) {
           res.statusCode = 403
@@ -198,14 +187,7 @@ export function createDataApi(dataDir, options = {}) {
             return
           }
           const { expectedMtime } = payload
-          if (patchMode) {
-            const { patch } = payload
-            if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-              res.statusCode = 400
-              res.end('patch must be an object')
-              return
-            }
-          } else if (!Array.isArray(payload.updates)) {
+          if (!Array.isArray(payload.updates)) {
             res.statusCode = 400
             res.end('updates must be an array')
             return
@@ -233,36 +215,26 @@ export function createDataApi(dataDir, options = {}) {
             return
           }
           let updated = 0
-          if (patchMode) {
-            // 顶层字段补丁：仅白名单字段写入，其余字段原样保留
-            for (const [k, v] of Object.entries(payload.patch)) {
+          if (!Array.isArray(data.features)) {
+            res.statusCode = 500
+            res.end('not an inventory')
+            return
+          }
+          // 定位 key：capability_key（可选）优先，缺失时用 JSON.stringify(path) 兜底
+          const index = new Map()
+          data.features.forEach((f, i) => {
+            if (f.capability_key !== undefined && f.capability_key !== null) {
+              index.set(f.capability_key, i)
+            }
+            index.set(JSON.stringify(f.path), i)
+          })
+          for (const u of payload.updates) {
+            const i = index.get(u?.key)
+            if (i === undefined || !u?.fields || typeof u.fields !== 'object') continue
+            for (const [k, v] of Object.entries(u.fields)) {
               if (allowedFields.includes(k)) {
-                data[k] = v
+                data.features[i][k] = v
                 updated++
-              }
-            }
-          } else {
-            if (!Array.isArray(data.features)) {
-              res.statusCode = 500
-              res.end('not an inventory')
-              return
-            }
-            // 定位 key：capability_key（可选）优先，缺失时用 JSON.stringify(path) 兜底
-            const index = new Map()
-            data.features.forEach((f, i) => {
-              if (f.capability_key !== undefined && f.capability_key !== null) {
-                index.set(f.capability_key, i)
-              }
-              index.set(JSON.stringify(f.path), i)
-            })
-            for (const u of payload.updates) {
-              const i = index.get(u?.key)
-              if (i === undefined || !u?.fields || typeof u.fields !== 'object') continue
-              for (const [k, v] of Object.entries(u.fields)) {
-                if (allowedFields.includes(k)) {
-                  data.features[i][k] = v
-                  updated++
-                }
               }
             }
           }
