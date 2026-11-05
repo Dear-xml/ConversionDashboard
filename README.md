@@ -80,5 +80,4 @@ npm run dev:data -- --dataDir <project>/.migration --icon <图标路径>
 
 ## 文档
 
-- `docs/skill-integration.md` — skill 集成与调用规范
-- `docs/development-rules.md` — 开发规则（数据接入、字段值展示、样式等）
+- `AGENTS.md` — 开发规则（数据接入、字段值展示、样式、UI 自适应等，新会话自动加载）

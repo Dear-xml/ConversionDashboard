@@ -1,6 +1,6 @@
 import router from '../router'
 
-export type TabName = 'overview' | 'features' | 'tasks' | 'analysis' | 'project' | 'review'
+export type TabName = 'overview' | 'features' | 'tasks' | 'analysis' | 'project' | 'code-audit' | 'review'
 
 /** progress.json 阶段 id → 详情 tab（总览「当前任务 / 执行详情」按阶段跳转） */
 export const STAGE_TO_TAB: Record<string, TabName> = {

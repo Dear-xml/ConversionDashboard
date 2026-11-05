@@ -47,6 +47,12 @@ export const routes = [
     meta: { title: '工程与环境', tab: 'project', icon: '▧' },
   },
   {
+    path: '/code-audit',
+    name: 'code-audit',
+    component: () => import('../pages/CodeAudit.vue'),
+    meta: { title: '代码审计', tab: 'code-audit', icon: '∑' },
+  },
+  {
     path: '/review',
     name: 'review',
     component: () => import('../pages/Review.vue'),

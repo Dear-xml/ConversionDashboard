@@ -17,6 +17,8 @@ export const DATA_FILES = {
   preflight: 'preflight-report.json',
   /** 架构分析与设计规划（三套结构方案与选型） */
   architecturePlan: 'architecture-plan/architecture-plan.json',
+  /** 双端代码静态审计（超大文件/模块/依赖/代码规模） */
+  codeStats: 'code-audit/code-stats.json',
 } as const
 
 /** 功能清单「是否实现/是否纳入开发」字段名（对应页面勾选，上游 schema 1.2 已定名） */

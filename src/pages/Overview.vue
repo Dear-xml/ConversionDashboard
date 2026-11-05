@@ -12,6 +12,7 @@ import type { BatchReport } from '../types/batchReport'
 import type { FeatureInventory } from '../types/inventory'
 import type { SessionSummary } from '../types/sessionSummary'
 import type { PreflightReport } from '../types/preflight'
+import type { CodeStats } from '../types/codeStats'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
 
 const raw = ref<RawProgress | null>(null)
@@ -20,11 +21,13 @@ const batch = ref<BatchReport | null>(null)
 const inventory = ref<FeatureInventory | null>(null)
 const sessions = ref<SessionSummary | null>(null)
 const preflight = ref<PreflightReport | null>(null)
+const codeStats = ref<CodeStats | null>(null)
 let stop: (() => void) | undefined
 let stopBatch: (() => void) | undefined
 let stopInventory: (() => void) | undefined
 let stopSessions: (() => void) | undefined
 let stopPreflight: (() => void) | undefined
+let stopCodeStats: (() => void) | undefined
 
 onMounted(() => {
   stop = onJsonChange<RawProgress>(DATA_FILES.progress, (data, meta) => {
@@ -43,6 +46,9 @@ onMounted(() => {
   stopPreflight = onJsonChange<PreflightReport>(DATA_FILES.preflight, (data) => {
     preflight.value = data
   })
+  stopCodeStats = onJsonChange<CodeStats>(DATA_FILES.codeStats, (data) => {
+    codeStats.value = data
+  })
 })
 
 onUnmounted(() => {
@@ -51,6 +57,7 @@ onUnmounted(() => {
   stopInventory?.()
   stopSessions?.()
   stopPreflight?.()
+  stopCodeStats?.()
 })
 
 const summary = computed(() => raw.value?.summary ?? null)
@@ -114,6 +121,17 @@ const preflightStats = computed(() => {
   for (const c of checks) counts[c.status] = (counts[c.status] ?? 0) + 1
   return { total: checks.length, passed: counts['passed'] ?? 0, failed: counts['failed'] ?? 0, skipped: counts['skipped'] ?? 0, notApplicable: counts['not_applicable'] ?? 0 }
 })
+
+// 工程数据（code-audit/code-stats.json）：双端规模对照
+const codeStatsSides = computed(() => {
+  const sides = codeStats.value?.sides
+  if (!sides) return []
+  return (['android', 'harmony'] as const)
+    .filter((k) => sides[k])
+    .map((k) => ({ key: k, ...sides[k] }))
+})
+
+const codeStatsLanguages = computed(() => codeStats.value?.sides.android.code.by_language ?? [])
 
 const stageRunning = computed(() => currentStage.value?.status === 'in_progress')
 
@@ -265,16 +283,22 @@ const openSpec = (taskId: string): void => {
     <div class="overview-grid project-overview" aria-label="第三层：工程与环境">
       <section class="panel span-6">
         <div class="row">
-          <h2><span class="section-index">03</span>安卓工程</h2>
-          <button type="button" class="link">工程详情 →</button>
+          <h2><span class="section-index">03</span>代码审计</h2>
+          <button type="button" class="link" @click="jumpToDetail('code-audit')">审计详情 →</button>
         </div>
-        <div class="project-metrics">
-          <div><strong>—</strong><small>源文件</small></div>
-          <div><strong>—</strong><small>物理行数</small></div>
-          <div><strong>—</strong><small>已记录依赖</small></div>
+        <div v-if="codeStatsSides.length" class="dual-metrics">
+          <div v-for="s in codeStatsSides" :key="s.key" class="dual-metric">
+            <small>{{ s.key === 'android' ? '安卓' : '鸿蒙' }}</small>
+            <div class="metric-row"><strong>{{ s.code.total_files }}</strong><em>源文件</em></div>
+            <div class="metric-row"><strong>{{ s.code.total_lines }}</strong><em>物理行数</em></div>
+            <div class="metric-row"><strong>{{ s.third_party_dependency_count }}</strong><em>依赖</em></div>
+          </div>
         </div>
-        <div class="stack-pills"><small>技术栈未采集</small></div>
-        <small>尚未接入工程概览报告</small>
+        <div class="stack-pills">
+          <span v-for="(lang, i) in codeStatsLanguages" :key="i" class="tag">{{ lang.language }} · {{ lang.files }} 文件 / {{ lang.lines }} 行</span>
+          <small v-if="!codeStatsLanguages.length">技术栈未采集</small>
+        </div>
+        <small>按 {{ DATA_FILES.codeStats }} 统计</small>
       </section>
 
       <section class="panel span-6">
@@ -288,7 +312,7 @@ const openSpec = (taskId: string): void => {
           <div><strong>{{ preflight ? preflightStats.skipped : '—' }}</strong><small>跳过</small></div>
           <div><strong>{{ preflight ? preflightStats.notApplicable : '—' }}</strong><small>不适用</small></div>
         </div>
-        <div class="row">
+        <div class="row env-foot">
           <small>{{ preflight ? `git ${preflight.gitHead ?? UNKNOWN}` : '尚未载入环境检查报告' }}</small>
           <span v-if="preflight" class="tag" :class="preflight.result === 'passed' ? 'green' : 'orange'">{{ preflight.result ?? UNKNOWN }}</span>
           <span v-else class="tag orange">未载入报告</span>
@@ -705,6 +729,54 @@ const openSpec = (taskId: string): void => {
   grid-template-columns: repeat(4, 1fr);
 }
 
+.dual-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+  margin: 15px 0;
+}
+
+.dual-metric {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f9fbfe;
+  min-width: 0;
+}
+
+.dual-metric > small {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 10px;
+  font-weight: 600;
+  color: #39867f;
+}
+
+.dual-metric .metric-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.dual-metric .metric-row strong {
+  font-size: 20px;
+  font-weight: 650;
+  color: #34445c;
+  min-width: 52px;
+  flex-shrink: 0;
+}
+
+.dual-metric .metric-row em {
+  font-style: normal;
+  font-size: 11px;
+  color: #61728a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .project-metrics strong,
 .environment-summary strong {
   display: block;
@@ -753,6 +825,23 @@ const openSpec = (taskId: string): void => {
 
 .environment-summary > div:nth-child(4) strong {
   color: #7c8798;
+}
+
+.env-foot {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.env-foot small {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.env-foot .tag {
+  flex-shrink: 0;
 }
 
 /* 第四层：阻塞情况 */
@@ -892,6 +981,10 @@ const openSpec = (taskId: string): void => {
 
   .project-metrics {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .dual-metrics {
+    grid-template-columns: 1fr;
   }
 }
 
