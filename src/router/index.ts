@@ -17,6 +17,12 @@ export const routes = [
     meta: { title: '迁移总览', tab: 'overview', icon: '◫' },
   },
   {
+    path: '/code-audit',
+    name: 'code-audit',
+    component: () => import('../pages/CodeAudit.vue'),
+    meta: { title: '代码静态分析', tab: 'code-audit', icon: '∑' },
+  },
+  {
     path: '/features',
     name: 'features',
     component: () => import('../pages/FeaturesList.vue'),
@@ -47,16 +53,10 @@ export const routes = [
     meta: { title: '工程与环境', tab: 'project', icon: '▧' },
   },
   {
-    path: '/code-audit',
-    name: 'code-audit',
-    component: () => import('../pages/CodeAudit.vue'),
-    meta: { title: '代码审计', tab: 'code-audit', icon: '∑' },
-  },
-  {
     path: '/review',
     name: 'review',
     component: () => import('../pages/Review.vue'),
-    meta: { title: '交付 Review', tab: 'review', icon: '◎' },
+    meta: { title: '功能完备度', tab: 'review', icon: '◎' },
   },
 ]
 

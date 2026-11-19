@@ -155,6 +155,22 @@ export async function readJson<T = unknown>(relPath: string, signal?: AbortSigna
 }
 
 /**
+ * 列出数据目录中匹配前缀的文件（一次性读取 manifest，不订阅变化）。
+ * 用于发现动态命名的产物（如 code-audit/history/ 归档）。
+ */
+export async function listDataFiles(
+  prefix: string,
+  signal?: AbortSignal,
+): Promise<Array<{ relPath: string; mtimeMs: number; size: number }>> {
+  const res = await fetch(`${DATA_BASE}/manifest`, { cache: 'no-store', signal })
+  if (!res.ok) throw new Error(`读取 manifest 失败 (HTTP ${res.status})`)
+  const manifest = (await res.json()) as DataManifest
+  return Object.entries(manifest.files)
+    .filter(([p]) => p.startsWith(prefix))
+    .map(([relPath, stamp]) => ({ relPath, mtimeMs: stamp.mtimeMs, size: stamp.size }))
+}
+
+/**
  * 监听数据目录中任意文件的变化，变化时回调其原始二进制。
  * dev 走 Vite WS 推送；dist/serve 走 SSE 推送（/api/data/events）；
  * 两者均不可用时按 pollMs 轮询 manifest 对比兜底。

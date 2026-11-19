@@ -1,22 +1,65 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import PageHeading from '../components/PageHeading.vue'
-import { onJsonChange } from '../utils/JsonOperateUtils'
-import { resolveUpdatedTime } from '../utils/datetime'
+import { listDataFiles, onJsonChange, readJson } from '../utils/JsonOperateUtils'
+import { formatTime, resolveUpdatedTime } from '../utils/datetime'
 import { UNKNOWN, DATA_FILES } from '../constants/common'
-import type { CodeStats, CodeStatsSide } from '../types/codeStats'
+import type { CodeStats, CodeStatsSide, DeltaSide, IncrementDelta } from '../types/codeStats'
 
 const FILE = DATA_FILES.codeStats
+const BASELINE_ANDROID_FILE = DATA_FILES.codeStatsBaselineAndroid
+const BASELINE_HARMONY_FILE = DATA_FILES.codeStatsBaselineHarmony
+const DELTA_FILE = DATA_FILES.incrementDelta
+const HISTORY_PREFIX = 'code-audit/history/'
 
 const raw = ref<CodeStats | null>(null)
 const fileMtime = ref<number | null>(null)
+const baselineAndroid = ref<CodeStats | null>(null)
+const baselineHarmony = ref<CodeStats | null>(null)
+const delta = ref<IncrementDelta | null>(null)
+const histories = ref<Array<{ relPath: string; data: CodeStats }>>([])
 let stop: (() => void) | undefined
 
+/** 从 manifest 发现 history/ 归档（动态命名，一次性读取；终检文件变化时刷新） */
+async function loadHistories(): Promise<void> {
+  try {
+    const listed = await listDataFiles(HISTORY_PREFIX)
+    const loaded = await Promise.all(
+      listed.map(async ({ relPath }) => {
+        try {
+          return { relPath, data: await readJson<CodeStats>(relPath) }
+        } catch {
+          return null
+        }
+      }),
+    )
+    histories.value = loaded
+      .filter((x): x is { relPath: string; data: CodeStats } => x !== null)
+      .sort((a, b) => (a.data.generated_at || '').localeCompare(b.data.generated_at || ''))
+  } catch (err) {
+    console.warn('[CodeAudit] 读取 history 归档失败:', err)
+  }
+}
+
 onMounted(() => {
-  stop = onJsonChange<CodeStats>(FILE, (d, meta) => {
-    raw.value = d
-    fileMtime.value = meta.mtimeMs ?? null
-  })
+  const stops = [
+    onJsonChange<CodeStats>(FILE, (d, meta) => {
+      raw.value = d
+      fileMtime.value = meta.mtimeMs ?? null
+      void loadHistories()
+    }),
+    onJsonChange<CodeStats>(BASELINE_ANDROID_FILE, (d) => {
+      baselineAndroid.value = d
+    }),
+    onJsonChange<CodeStats>(BASELINE_HARMONY_FILE, (d) => {
+      baselineHarmony.value = d
+    }),
+    onJsonChange<IncrementDelta>(DELTA_FILE, (d) => {
+      delta.value = d
+    }),
+  ]
+  stop = () => stops.forEach((s) => s())
+  void loadHistories()
 })
 
 onUnmounted(() => stop?.())
@@ -57,22 +100,235 @@ const compareRows = computed(() => {
     { label: `超大文件（≥${raw.value!.thresholds.oversized_file_lines} 行）`, values: [c.oversized.android_count, c.oversized.harmony_count] },
   ]
 })
+
+// ---- 分析快照时间线 ----
+
+interface TimelineNode {
+  key: string
+  kind: 'baseline' | 'history' | 'current'
+  title: string
+  time: string
+  revision: string
+  lines: string
+  ghost?: boolean
+  active?: boolean
+}
+
+const nodeRevision = (d: CodeStats): string =>
+  d.repositories.map((r) => `${r.id}: ${r.revision || UNKNOWN}`).join(' · ')
+
+const nodeLines = (d: CodeStats): string => {
+  const parts = SIDE_KEYS.filter((k) => d.sides?.[k]).map(
+    (k) => `${k === 'android' ? 'A' : 'H'} ${d.sides[k].code.total_lines.toLocaleString()} 行`,
+  )
+  return parts.join(' / ') || UNKNOWN
+}
+
+const timeline = computed<TimelineNode[]>(() => {
+  const nodes: TimelineNode[] = []
+  if (baselineAndroid.value) {
+    nodes.push({
+      key: 'b-android', kind: 'baseline', title: 'Android 基线',
+      time: formatTime(baselineAndroid.value.generated_at),
+      revision: nodeRevision(baselineAndroid.value), lines: nodeLines(baselineAndroid.value),
+    })
+  }
+  nodes.push(
+    baselineHarmony.value
+      ? {
+          key: 'b-harmony', kind: 'baseline', title: 'HarmonyOS 基线',
+          time: formatTime(baselineHarmony.value.generated_at),
+          revision: nodeRevision(baselineHarmony.value), lines: nodeLines(baselineHarmony.value),
+        }
+      : { key: 'b-harmony', kind: 'baseline', title: 'HarmonyOS 基线', time: '', revision: '', lines: '未生成（全新迁移或未到阶段）', ghost: true },
+  )
+  histories.value.forEach((h, i) => {
+    nodes.push({
+      key: h.relPath, kind: 'history', title: `第 ${i + 1} 轮终检`,
+      time: formatTime(h.data.generated_at), revision: nodeRevision(h.data), lines: nodeLines(h.data),
+    })
+  })
+  if (raw.value) {
+    nodes.push({
+      key: 'current', kind: 'current', title: '当前终检',
+      time: formatTime(raw.value.generated_at), revision: nodeRevision(raw.value),
+      lines: nodeLines(raw.value), active: true,
+    })
+  }
+  return nodes
+})
+
+const hasAnySnapshot = computed(
+  () => Boolean(raw.value || baselineAndroid.value || baselineHarmony.value || histories.value.length),
+)
+
+// ---- 本轮分析（increment-delta.json） ----
+
+const SOURCE_KIND_LABEL: Record<string, string> = {
+  'baseline-android': 'Android 基线',
+  'baseline-harmony': 'HarmonyOS 基线',
+  'history-final': '上一轮终检',
+  external: '外部快照',
+}
+
+const fmtSigned = (n: number): string => (n > 0 ? `+${n}` : `${n}`)
+const deltaTone = (n: number): string => (n > 0 ? 'tone-pos' : n < 0 ? 'tone-neg' : 'tone-zero')
+
+const deltaSides = computed(() =>
+  SIDE_KEYS.filter((k) => delta.value?.sides?.[k]).map((k) => ({ key: k, side: delta.value!.sides[k] as DeltaSide })),
+)
+
+const deltaBasisLabel = (key: string): string => {
+  const prev = delta.value?.inputs.previous_by_side?.[key as 'android' | 'harmony']
+  if (!prev) return '无对比快照（该侧未计算）'
+  return `对比${SOURCE_KIND_LABEL[prev.source_kind] ?? prev.source_kind} · ${formatTime(prev.generated_at)}`
+}
+
+const depNet = (d: DeltaSide): number =>
+  d.third_party_dependencies.added.length - d.third_party_dependencies.removed.length
+const oversizedWarn = (d: DeltaSide): number => d.oversized_files.added.length + d.oversized_files.persisted.length
+
+interface DeltaDetailRow {
+  cls: string
+  text: string
+}
+
+const deltaDetailRows = (d: DeltaSide): DeltaDetailRow[] => {
+  const rows: DeltaDetailRow[] = []
+  for (const m of d.modules.added) rows.push({ cls: 'row-module', text: `新增模块 ${m.name} · ${m.kind}` })
+  for (const name of d.modules.removed) rows.push({ cls: 'row-muted', text: `移除模块 ${name}` })
+  for (const dep of d.third_party_dependencies.added)
+    rows.push({ cls: 'row-dep', text: `新增依赖 ${dep.name}${dep.version ? ` @ ${dep.version}` : ''}` })
+  for (const c of d.third_party_dependencies.version_changed)
+    rows.push({ cls: 'row-dep', text: `依赖升级 ${c.name} ${c.from ?? UNKNOWN} → ${c.to ?? UNKNOWN}` })
+  for (const name of d.third_party_dependencies.removed) rows.push({ cls: 'row-muted', text: `移除依赖 ${name}` })
+  for (const n of d.native_libraries.added) rows.push({ cls: 'row-dep', text: `新增原生库 ${n}` })
+  for (const n of d.native_libraries.removed) rows.push({ cls: 'row-muted', text: `移除原生库 ${n}` })
+  for (const f of d.oversized_files.added)
+    rows.push({ cls: 'row-oversized-bad', text: `超大新增 ${f.path} · ${f.lines} 行${f.module && f.module !== 'unknown' ? `（${f.module}）` : ''}` })
+  for (const f of d.oversized_files.persisted)
+    rows.push({ cls: 'row-oversized-bad', text: `超大恶化 ${f.path} · ${fmtSigned(f.lines_delta)} 行` })
+  for (const p of d.oversized_files.removed) rows.push({ cls: 'row-oversized-good', text: `超大消除 ${p}` })
+  return rows
+}
+
+const comparisonDeltaRows = computed(() => {
+  const c = delta.value?.comparison_delta
+  if (!c) return []
+  return [
+    { label: '物理行数', a: c.total_lines.android, h: c.total_lines.harmony },
+    { label: '模块', a: c.modules.android, h: c.modules.harmony },
+    { label: '三方依赖', a: c.third_party_dependencies.android, h: c.third_party_dependencies.harmony },
+    { label: '原生库', a: c.native_libraries.android, h: c.native_libraries.harmony },
+    { label: '超大文件', a: c.oversized.android_count, h: c.oversized.harmony_count },
+  ]
+})
 </script>
 
 <template>
-  <PageHeading kicker="D2H / code-audit" title="代码审计" :note="`双端代码规模 · 模块 · 依赖 · 超大文件 · ${FILE} 实时渲染`" />
+  <PageHeading kicker="D2H / code-audit" title="代码静态分析" :note="`双端代码规模 · 模块 · 依赖 · 超大文件 · ${FILE} 实时渲染`" />
 
-  <section v-if="!raw" class="panel placeholder">
+  <section v-if="!hasAnySnapshot" class="panel placeholder">
     <span class="glyph">∑</span>
     <strong>等待数据</strong>
-    <small>正在读取 {{ FILE }}…（尚未生成代码审计报告时此页为空）</small>
+    <small>正在读取 {{ FILE }}…（尚未生成代码静态分析报告时此页为空）</small>
   </section>
 
   <template v-else>
-    <!-- 01 双端对照 -->
+    <!-- 00 分析快照时间线 -->
     <section class="panel">
       <div class="row">
-        <h2><span class="section-index">01</span>双端对照</h2>
+        <h2><span class="section-index">00</span>分析快照</h2>
+        <span class="tag muted-tag">{{ timeline.length }} 份</span>
+      </div>
+      <div class="timeline">
+        <div
+          v-for="n in timeline"
+          :key="n.key"
+          class="tl-node"
+          :class="[`tl-${n.kind}`, { ghost: n.ghost, active: n.active }]"
+        >
+          <div class="tl-dot"></div>
+          <div class="tl-body">
+            <strong>{{ n.title }}</strong>
+            <small v-if="!n.ghost">{{ n.time }}</small>
+            <small class="tl-lines">{{ n.lines }}</small>
+            <small v-if="n.revision" class="tl-rev">{{ n.revision }}</small>
+          </div>
+        </div>
+      </div>
+      <small v-if="histories.length" class="empty-inline">
+        历史归档 {{ histories.length }} 份（code-audit/history/）；节点为概要，完整明细仅展示当前终检
+      </small>
+      <small v-else class="empty-inline">暂无历史归档；增量轮重扫前上一轮终检会移入 history/</small>
+    </section>
+
+    <!-- 01 本轮分析 -->
+    <section v-if="delta" class="panel">
+      <div class="row">
+        <h2><span class="section-index">01</span>本轮分析</h2>
+        <span class="tag">生成于 {{ formatTime(delta.generated_at) }}</span>
+      </div>
+      <div class="delta-grid">
+        <div
+          v-for="s in deltaSides"
+          :key="s.key"
+          class="delta-side"
+          :class="s.key === 'android' ? 'is-android' : 'is-harmony'"
+        >
+          <div class="row delta-side-head">
+            <strong>{{ sideLabel(s.key) }}</strong>
+            <span class="tag muted-tag">{{ deltaBasisLabel(s.key) }}</span>
+          </div>
+          <div class="delta-kpis">
+            <div class="kpi">
+              <strong :class="deltaTone(s.side.code.total_lines_delta)">{{ fmtSigned(s.side.code.total_lines_delta) }}</strong>
+              <small>行数（{{ fmtSigned(s.side.code.total_files_delta) }} 文件）</small>
+            </div>
+            <div class="kpi">
+              <strong :class="deltaTone(depNet(s.side))">{{ fmtSigned(depNet(s.side)) }}</strong>
+              <small>依赖 +{{ s.side.third_party_dependencies.added.length }} −{{ s.side.third_party_dependencies.removed.length }} ~{{ s.side.third_party_dependencies.version_changed.length }}</small>
+            </div>
+            <div class="kpi">
+              <strong :class="oversizedWarn(s.side) ? 'tone-neg' : 'tone-zero'">+{{ s.side.oversized_files.added.length }} ↗{{ s.side.oversized_files.persisted.length }}</strong>
+              <small>超大新增/恶化 · ✓{{ s.side.oversized_files.removed.length }} 消除</small>
+            </div>
+          </div>
+          <details v-if="deltaDetailRows(s.side).length" class="dep-group delta-detail">
+            <summary>
+              <span class="dep-group-label">本轮明细</span>
+              <span class="tag muted-tag">{{ deltaDetailRows(s.side).length }} 条</span>
+            </summary>
+            <div class="dep-list">
+              <div v-for="(r, ri) in deltaDetailRows(s.side)" :key="ri" class="delta-row" :class="r.cls">{{ r.text }}</div>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div v-if="comparisonDeltaRows.length" class="delta-comparison">
+        <small class="block-label">双端差距变化（当前 − 对比基准）</small>
+        <div class="cd-chips">
+          <span v-for="row in comparisonDeltaRows" :key="row.label" class="tag">
+            {{ row.label }} A {{ fmtSigned(row.a) }} / H {{ fmtSigned(row.h) }}
+          </span>
+        </div>
+      </div>
+      <ul v-if="delta.notes.length" class="question-list delta-notes">
+        <li v-for="(q, i) in delta.notes" :key="i">{{ q }}</li>
+      </ul>
+    </section>
+    <section v-else-if="raw" class="panel">
+      <div class="row">
+        <h2><span class="section-index">01</span>本轮分析</h2>
+      </div>
+      <div class="empty-inline">本轮差量尚未生成（本轮终检后由 increment_delta.py 产出 increment-delta.json）</div>
+    </section>
+
+    <template v-if="raw">
+    <!-- 02 双端对照 -->
+    <section class="panel">
+      <div class="row">
+        <h2><span class="section-index">02</span>双端对照</h2>
         <span class="tag">更新于 {{ updatedText }}</span>
       </div>
       <table class="compare-table">
@@ -102,7 +358,7 @@ const compareRows = computed(() => {
     <!-- 各端代码规模 -->
     <section v-for="(s, si) in sides" :key="s.key" class="panel side-panel">
       <div class="row">
-        <h2><span class="section-index">{{ String(si + 2).padStart(2, '0') }}</span>{{ sideLabel(s.key) }} 代码规模</h2>
+        <h2><span class="section-index">{{ String(si + 3).padStart(2, '0') }}</span>{{ sideLabel(s.key) }} 代码规模</h2>
         <span class="tag">{{ sideCount(s) }}</span>
       </div>
 
@@ -173,7 +429,7 @@ const compareRows = computed(() => {
     <!-- 注意事项 -->
     <section class="panel">
       <div class="row">
-        <h2><span class="section-index">{{ String(sides.length + 2).padStart(2, '0') }}</span>注意事项</h2>
+        <h2><span class="section-index">{{ String(sides.length + 3).padStart(2, '0') }}</span>注意事项</h2>
         <span v-if="raw.notes.length" class="tag orange">{{ raw.notes.length }} 项</span>
       </div>
       <ul v-if="raw.notes.length" class="question-list">
@@ -181,6 +437,7 @@ const compareRows = computed(() => {
       </ul>
       <div v-else class="empty-inline">无注意事项</div>
     </section>
+    </template>
   </template>
 </template>
 
@@ -515,6 +772,194 @@ const compareRows = computed(() => {
 .empty-inline {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* ---- 00 分析快照时间线 ---- */
+.timeline {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  padding: 16px 0 4px;
+}
+
+.tl-node {
+  position: relative;
+  flex: 1 1 160px;
+  min-width: 160px;
+  padding: 12px 14px 0 2px;
+  border-top: 2px solid #e3e9f2;
+}
+
+.tl-dot {
+  position: absolute;
+  top: -6px;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #8aa0c4;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #c9d6ea;
+}
+
+.tl-node.tl-history .tl-dot {
+  background: #6f8bb5;
+}
+
+.tl-node.active .tl-dot {
+  background: var(--blue);
+  box-shadow: 0 0 0 3px #dce8ff;
+}
+
+.tl-node.ghost {
+  opacity: 0.55;
+}
+
+.tl-node.ghost .tl-dot {
+  background: #d3dbe6;
+  box-shadow: 0 0 0 1px #e2e8f1;
+}
+
+.tl-body {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.tl-body strong {
+  font-size: 13px;
+  color: #34445c;
+}
+
+.tl-node.active .tl-body strong {
+  color: var(--blue);
+}
+
+.tl-body small {
+  color: var(--muted);
+}
+
+.tl-lines {
+  color: #48586f;
+}
+
+.tl-rev {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- 01 本轮分析 ---- */
+.delta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 14px 0 4px;
+}
+
+.delta-side {
+  border: 1px solid #edf0f4;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.delta-side.is-android {
+  border-top: 3px solid #3766dc;
+}
+
+.delta-side.is-harmony {
+  border-top: 3px solid #168168;
+}
+
+.delta-side-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.delta-side-head strong {
+  font-size: 14px;
+  color: #34445c;
+}
+
+.delta-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.kpi {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f4f6fa;
+}
+
+.kpi strong {
+  display: block;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.kpi small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tone-pos {
+  color: #2463eb;
+}
+
+.tone-neg {
+  color: #b54545;
+}
+
+.tone-zero {
+  color: var(--muted);
+}
+
+.delta-detail {
+  margin-top: 12px;
+}
+
+.delta-row {
+  font-size: 12.5px;
+  padding: 4px 0;
+  color: #48586f;
+  overflow-wrap: anywhere;
+}
+
+.delta-row.row-module {
+  color: #48736e;
+}
+
+.delta-row.row-muted {
+  color: var(--muted);
+}
+
+.delta-row.row-oversized-bad {
+  color: #b54545;
+}
+
+.delta-row.row-oversized-good {
+  color: #15825e;
+}
+
+.delta-comparison {
+  margin-top: 6px;
+}
+
+.cd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.delta-notes {
+  margin-top: 10px;
+}
+
+@media (max-width: 700px) {
+  .delta-kpis {
+    grid-template-columns: repeat(1, 1fr);
+  }
 }
 
 @media (max-width: 700px) {

@@ -271,8 +271,8 @@ const openSpec = (taskId: string): void => {
     <div class="overview-grid project-overview" aria-label="第三层：工程与环境">
       <section class="panel span-6">
         <div class="row">
-          <h2><span class="section-index">03</span>代码审计</h2>
-          <button type="button" class="link" @click="jumpToDetail('code-audit')">审计详情 →</button>
+          <h2><span class="section-index">03</span>代码静态分析</h2>
+          <button type="button" class="link" @click="jumpToDetail('code-audit')">分析详情 →</button>
         </div>
         <div v-if="codeStatsSides.length" class="dual-metrics">
           <div v-for="s in codeStatsSides" :key="s.key" class="dual-metric">
