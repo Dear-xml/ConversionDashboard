@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange, writeJson } from '../utils/JsonOperateUtils'
-import { resolveUpdatedTime } from '../utils/datetime'
+import { formatTime, resolveUpdatedTime } from '../utils/datetime'
 import { CONFIDENCE_TONE, type Tone } from '../constants/inventory'
 import type { FeatureInventory } from '../types/inventory'
+import type { CompletenessSnapshot, CompletenessStatus, FeatureGap } from '../types/completeness'
 import type { RawProgress } from '../types/progress'
 import { UNKNOWN, DATA_FILES, FEATURE_IMPLEMENTED_FIELD, FEATURE_LOCK_STAGE } from '../constants/common'
 
@@ -20,12 +21,38 @@ interface ModuleGroup {
 
 const raw = ref<FeatureInventory | null>(null)
 const progress = ref<RawProgress | null>(null)
+const completeness = ref<CompletenessSnapshot | null>(null)
+const gap = ref<FeatureGap | null>(null)
+const viewMode = ref<'list' | 'increment'>('list')
+const viewInteracted = ref(false)
+
+const switchView = (mode: 'list' | 'increment'): void => {
+  viewInteracted.value = true
+  viewMode.value = mode
+}
+
+/**
+ * 增量语境声明 = feature-gap.json 存在。
+ * 首轮全新迁移不派生；增量轮/介入式增量启动时派生，终检后重派生（空闲观测展示最新态势）。
+ */
+const incrementContext = computed(() => gap.value !== null)
+
+watch(
+  incrementContext,
+  (value) => {
+    if (value && !viewInteracted.value) viewMode.value = 'increment'
+  },
+  { immediate: true },
+)
+const statusFilter = ref('')
 const fileMtime = ref<number | null>(null)
 const page = ref(1)
 const pageSize = ref(10)
 const stageFilter = ref('')
 let stop: (() => void) | undefined
 let stopProgress: (() => void) | undefined
+let stopCompleteness: (() => void) | undefined
+let stopGap: (() => void) | undefined
 let initialized = false
 
 onMounted(() => {
@@ -41,23 +68,33 @@ onMounted(() => {
   stopProgress = onJsonChange<RawProgress>(DATA_FILES.progress, (d) => {
     progress.value = d
   })
+  stopCompleteness = onJsonChange<CompletenessSnapshot>(DATA_FILES.completeness, (d) => {
+    completeness.value = d
+  })
+  stopGap = onJsonChange<FeatureGap>(DATA_FILES.featureGap, (d) => {
+    gap.value = d
+  })
 })
 
 onUnmounted(() => {
   stop?.()
   stopProgress?.()
+  stopCompleteness?.()
+  stopGap?.()
 })
 
 const updatedText = computed(() => resolveUpdatedTime(raw.value, fileMtime.value))
 
-/** 进入开发阶段（code-conversion 及之后）后锁定功能清单编辑 */
+/** 进入开发阶段（code-conversion 及之后）后锁定功能清单编辑；全部完成（currentStage=null）时同样锁定 */
 const locked = computed(() => {
   const p = progress.value
   if (!p) return false
-  const cur = p.stages.find((s) => s.id === p.summary?.currentStage)
   const lockStage = p.stages.find((s) => s.id === FEATURE_LOCK_STAGE)
-  if (!cur || !lockStage) return false
-  return cur.order >= lockStage.order
+  if (!lockStage) return false
+  const cur = p.stages.find((s) => s.id === p.summary?.currentStage)
+  if (cur && cur.order >= lockStage.order) return true
+  // 终态兜底：code-conversion 已开始/完成/被阻塞 → 已进入开发阶段
+  return ['in_progress', 'completed', 'blocked'].includes(lockStage.status)
 })
 
 const features = computed(() => raw.value?.features ?? [])
@@ -303,6 +340,113 @@ const jumpToTable = (stage: string): void => {
   page.value = 1
   scrollToEl('features-table')
 }
+
+// ---- 完备度视图（d2h-feature-completeness 产物 join）----
+
+const STATUS_META: Record<CompletenessStatus, { label: string; cls: string }> = {
+  implemented: { label: '已完备', cls: 'green' },
+  partial: { label: '部分实现', cls: 'orange' },
+  mock: { label: 'UI 壳', cls: 'orange' },
+  absent: { label: '缺失', cls: 'red' },
+  uncertain: { label: '待定', cls: '' },
+  unreachable: { label: '不可达', cls: '' },
+}
+
+/** completeness.features[].key 与清单/勾选使用同一键算法，直接建 Map join */
+const statusIndex = computed(() => {
+  const map = new Map<string, { status: CompletenessStatus; confidence: string }>()
+  for (const f of completeness.value?.features ?? []) {
+    map.set(f.key, { status: f.status, confidence: f.confidence })
+  }
+  return map
+})
+
+const UNVERIFIED_LABEL = '未核验'
+
+/** 增量条目：渲染真源为 feature-gap.json 的 gap[]，join 清单补展示字段、join 完备度补置信度 */
+interface IncrementItem {
+  key: string
+  path: string[]
+  capabilityKey: string | null
+  status: CompletenessStatus
+  f: Feature | null
+  confidence: string
+}
+
+const incrementItems = computed<IncrementItem[]>(() => {
+  const featureIndex = new Map(features.value.map((f) => [fkey(f), f]))
+  return (gap.value?.gap ?? []).map((g) => ({
+    key: g.key,
+    path: g.path ?? [],
+    capabilityKey: g.capability_key ?? null,
+    status: g.status,
+    f: featureIndex.get(g.key) ?? null,
+    confidence: statusIndex.value.get(g.key)?.confidence ?? '—',
+  }))
+})
+
+const incrementCounts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = { absent: 0, partial: 0, mock: 0, uncertain: 0, unreachable: 0 }
+  for (const item of incrementItems.value) counts[item.status] = (counts[item.status] ?? 0) + 1
+  return counts
+})
+
+/** 差量条目 join 不到当前清单（完备度重扫后差量待重派生的旁证） */
+const orphanCount = computed(() => incrementItems.value.filter((i) => i.f === null).length)
+
+const incrementGroups = computed(() => {
+  const out: Array<{ name: string; items: IncrementItem[] }> = []
+  const index = new Map<string, { name: string; items: IncrementItem[] }>()
+  for (const item of incrementItems.value) {
+    if (statusFilter.value && item.status !== statusFilter.value) continue
+    const name = item.path[0] || '未分组'
+    let g = index.get(name)
+    if (!g) {
+      g = { name, items: [] }
+      index.set(name, g)
+      out.push(g)
+    }
+    g.items.push(item)
+  }
+  return out
+})
+
+/** 完备度重扫晚于差量生成 → 旧差量可能不再反映当前候选 */
+const gapStale = computed(() => {
+  const g = gap.value
+  const c = completeness.value
+  if (!g || !c) return false
+  return new Date(g.generated_at).getTime() < new Date(c.generated_at).getTime()
+})
+
+const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '全部状态' },
+  { value: 'absent', label: '缺失' },
+  { value: 'partial', label: '部分实现' },
+  { value: 'mock', label: 'UI 壳' },
+  { value: 'uncertain', label: '待定' },
+  { value: 'unreachable', label: '不可达' },
+]
+
+/** 增量分类的页面释义（对齐 d2h-feature-completeness 状态语义） */
+const STATUS_HELP_ROWS = [
+  { key: 'absent', text: '负向复核后确认鸿蒙侧没有实现，是增量开发的主要对象。' },
+  { key: 'partial', text: '主流程已有，但分支、错误路径或部分用户可见结果缺失。' },
+  { key: 'mock', text: '只有界面壳，点击后没有真实业务效果（假数据 / 空实现）。' },
+  { key: 'uncertain', text: '证据不足，暂无法判定实现与否，需补充核验后再定。' },
+  { key: 'unreachable', text: '代码存在但入口不可达，用户实际到不了该功能，等同不可用。' },
+].map((row) => ({
+  ...row,
+  label: STATUS_META[row.key as CompletenessStatus]?.label ?? row.key,
+  cls: STATUS_META[row.key as CompletenessStatus]?.cls ?? '',
+}))
+
+const STATUS_HELP_TEXT: Record<string, string> = Object.fromEntries(STATUS_HELP_ROWS.map((r) => [r.key, r.text]))
+
+const statusLabel = (status: CompletenessStatus | null): string =>
+  status ? (STATUS_META[status]?.label ?? status) : UNVERIFIED_LABEL
+const statusCls = (status: CompletenessStatus | null): string =>
+  status ? (STATUS_META[status]?.cls ?? '') : ''
 </script>
 
 <template>
@@ -315,6 +459,45 @@ const jumpToTable = (stage: string): void => {
   </section>
 
   <template v-else>
+    <!-- 视图切换：增量开发语境（完备度已有 + 流程进行中）时增量视图在前并默认选中 -->
+    <div class="view-toggle" role="tablist">
+      <template v-if="incrementContext">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="viewMode === 'increment'"
+          :class="{ active: viewMode === 'increment' }"
+          @click="switchView('increment')"
+        >增量视图 · {{ incrementItems.length }} 项</button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="viewMode === 'list'"
+          :class="{ active: viewMode === 'list' }"
+          @click="switchView('list')"
+        >清单视图</button>
+      </template>
+      <template v-else>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="viewMode === 'list'"
+          :class="{ active: viewMode === 'list' }"
+          @click="switchView('list')"
+        >清单视图</button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="viewMode === 'increment'"
+          :class="{ active: viewMode === 'increment' }"
+          @click="switchView('increment')"
+        >增量视图 · {{ incrementItems.length }} 项</button>
+      </template>
+      <span v-if="completeness" class="tag green">完备度快照 {{ formatTime(completeness.generated_at) }}</span>
+      <span v-else class="tag">完备度未生成 · 增量按已勾选范围展示</span>
+    </div>
+
+    <template v-if="viewMode === 'list'">
     <section class="panel">
       <div class="row">
         <h2>{{ raw.title || '功能清单' }}</h2>
@@ -492,6 +675,112 @@ const jumpToTable = (stage: string): void => {
       </div>
       <div v-else class="empty-inline">无排除候选</div>
     </section>
+    </template>
+
+    <!-- 增量视图：feature-gap.json 为真源（存在即增量语境声明） -->
+    <template v-else>
+      <section v-if="!gap" class="panel placeholder">
+        <span class="glyph">☷</span>
+        <strong>尚无功能差值</strong>
+        <small>首轮迁移不派生功能差值；增量开发启动时由 d2h-feature-completeness 生成 feature-gap.json</small>
+      </section>
+
+      <template v-else>
+        <section class="panel">
+          <div class="row">
+            <h2>本轮增量功能</h2>
+            <span class="tag">以 feature-gap.json 为准 · 生成于 {{ formatTime(gap.generated_at) }}</span>
+          </div>
+          <div class="summary-counts completeness-counts">
+            <div class="stat-card" role="button" tabindex="0" :title="STATUS_HELP_TEXT.absent" @click="statusFilter = 'absent'; scrollToEl('increment-table')" @keyup.enter="statusFilter = 'absent'; scrollToEl('increment-table')">
+              <strong class="red-number">{{ incrementCounts.absent }}</strong><small>缺失</small>
+            </div>
+            <div class="stat-card" role="button" tabindex="0" :title="STATUS_HELP_TEXT.partial" @click="statusFilter = 'partial'; scrollToEl('increment-table')" @keyup.enter="statusFilter = 'partial'; scrollToEl('increment-table')">
+              <strong class="orange-number">{{ incrementCounts.partial }}</strong><small>部分实现</small>
+            </div>
+            <div class="stat-card" role="button" tabindex="0" :title="STATUS_HELP_TEXT.mock" @click="statusFilter = 'mock'; scrollToEl('increment-table')" @keyup.enter="statusFilter = 'mock'; scrollToEl('increment-table')">
+              <strong class="orange-number">{{ incrementCounts.mock }}</strong><small>UI 壳</small>
+            </div>
+            <div class="stat-card" role="button" tabindex="0" :title="STATUS_HELP_TEXT.uncertain" @click="statusFilter = 'uncertain'; scrollToEl('increment-table')" @keyup.enter="statusFilter = 'uncertain'; scrollToEl('increment-table')">
+              <strong>{{ incrementCounts.uncertain }}</strong><small>待定</small>
+            </div>
+            <div class="stat-card" role="button" tabindex="0" :title="STATUS_HELP_TEXT.unreachable" @click="statusFilter = 'unreachable'; scrollToEl('increment-table')" @keyup.enter="statusFilter = 'unreachable'; scrollToEl('increment-table')">
+              <strong>{{ incrementCounts.unreachable }}</strong><small>不可达</small>
+            </div>
+          </div>
+          <details class="status-legend">
+            <summary>增量分类说明</summary>
+            <div class="legend-grid">
+              <div v-for="row in STATUS_HELP_ROWS" :key="row.key" class="legend-row">
+                <span class="tag" :class="row.cls">{{ row.label }}</span>
+                <span class="legend-text">{{ row.text }}</span>
+              </div>
+            </div>
+          </details>
+          <small class="completeness-note">
+            增量候选 = should_develop 且未完备{{ orphanCount ? ` · ${orphanCount} 条未匹配当前清单` : '' }}
+            <span v-if="gapStale" class="tag orange">完备度已更新，差量待重派生</span>
+          </small>
+        </section>
+
+        <section id="increment-table" class="panel scroll-anchor">
+          <div class="toolbar">
+            <select v-model="statusFilter" aria-label="筛选完备状态">
+              <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <span class="selected-info">{{ incrementGroups.length }} 个模块 · {{ incrementItems.length }} 条</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>完备状态</th>
+                  <th>功能 / 范围</th>
+                  <th>触发 → 效果</th>
+                  <th>能力键</th>
+                  <th>核验置信度</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="g in incrementGroups" :key="g.name">
+                  <tr>
+                    <td>—</td>
+                    <td class="title"><strong>{{ g.name }}</strong><small>{{ g.items.length }} 项</small></td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                  <tr v-for="row in g.items" :key="row.key">
+                    <td>
+                      <span class="tag" :class="statusCls(row.status)">{{ statusLabel(row.status) }}</span>
+                    </td>
+                    <td class="scope title">
+                      {{ row.path.slice(1).join(' / ') || row.path[0] || '—' }}
+                      <small>{{ row.capabilityKey ?? UNKNOWN }}</small>
+                    </td>
+                    <td class="title">
+                      <template v-if="row.f">
+                        {{ row.f.trigger }} → {{ row.f.effect }}
+                        <small v-if="row.f.conditions.length">条件：{{ row.f.conditions.join('；') }}</small>
+                      </template>
+                      <template v-else>—</template>
+                    </td>
+                    <td class="title"><small>{{ row.capabilityKey ?? UNKNOWN }}</small></td>
+                    <td>
+                      <span class="tag" :class="tone(CONFIDENCE_TONE, row.confidence)">{{ row.confidence }}</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="!incrementGroups.length" class="empty">暂无增量候选（当前筛选下为空）</div>
+          <ul v-if="gap.notes.length" class="question-list completeness-note-list">
+            <li v-for="(q, i) in gap.notes" :key="i">{{ q }}</li>
+          </ul>
+        </section>
+      </template>
+    </template>
   </template>
 
   <!-- 二次确认总结弹框 -->
@@ -513,6 +802,109 @@ const jumpToTable = (stage: string): void => {
 </template>
 
 <style scoped>
+/* ---- 视图切换（清单视图 / 完备度视图） ---- */
+.view-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 14px;
+}
+
+.view-toggle button {
+  padding: 7px 16px;
+  font-weight: 600;
+}
+
+.view-toggle button.active {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+
+.completeness-counts {
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.green-number {
+  color: #15825e;
+}
+
+.completeness-note {
+  display: block;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.status-legend {
+  margin-top: 10px;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.status-legend > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: #34445c;
+  background: #f7f9fc;
+}
+
+.status-legend > summary::-webkit-details-marker {
+  display: none;
+}
+
+.status-legend > summary::before {
+  content: '▸';
+  color: #8191a8;
+  transition: transform 0.15s;
+}
+
+.status-legend[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.legend-grid {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px 10px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.legend-row .tag {
+  flex-shrink: 0;
+  min-width: 64px;
+  text-align: center;
+}
+
+.legend-text {
+  color: #48586f;
+}
+
+.completeness-note-list {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: #48586f;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .completeness-counts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 .summary-counts {
   display: grid;
   grid-template-columns: repeat(6, 1fr);

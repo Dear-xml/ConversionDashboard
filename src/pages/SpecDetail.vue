@@ -32,18 +32,45 @@ const updatedText = computed(() => resolveUpdatedTime(raw.value, fileMtime.value
 
 const summary = computed(() => raw.value?.summary ?? null)
 
+// ---- wave 映射与排序：执行顺序 = planning.waves 顺序 × 各 wave.task_ids 内顺序；无 planning 时按 order ----
+const waveOf = computed(() => {
+  const map = new Map<string, string>()
+  for (const w of raw.value?.planning?.waves ?? []) {
+    for (const id of w.task_ids ?? []) map.set(id, w.wave_id)
+  }
+  return map
+})
+
+/** task_id → 全局执行序号：按 waves 顺序展开 task_ids 依次递增（重复 task_id 只记首次） */
+const waveTaskSeq = computed(() => {
+  const idx = new Map<string, number>()
+  let n = 0
+  for (const w of raw.value?.planning?.waves ?? []) {
+    for (const id of w.task_ids ?? []) {
+      if (!idx.has(id)) idx.set(id, n++)
+    }
+  }
+  return idx
+})
+
 const tasks = computed(() => {
   const list = raw.value?.tasks ?? []
   const q = query.value.trim().toLowerCase()
-  return list.filter((t) => {
+  const filtered = list.filter((t) => {
     const hitQuery =
       !q ||
-      (t.task_id + ' ' + t.page_id + ' ' + t.kind + ' ' + pagePathText(t.page_path))
+      (t.task_id + ' ' + t.page_id + ' ' + t.kind + ' ' + (t.page_title ?? '') + ' ' + (waveOf.value.get(t.task_id) ?? '') + ' ' + pagePathText(t.page_path))
         .toLowerCase()
         .includes(q)
     const hitFilter =
       !filter.value || t.development === filter.value
     return hitQuery && hitFilter
+  })
+  return [...filtered].sort((a, b) => {
+    const sa = waveTaskSeq.value.get(a.task_id) ?? Number.MAX_SAFE_INTEGER
+    const sb = waveTaskSeq.value.get(b.task_id) ?? Number.MAX_SAFE_INTEGER
+    if (sa !== sb) return sa - sb
+    return a.order - b.order
   })
 })
 
@@ -97,7 +124,7 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
           v-model="query"
           type="search"
           aria-label="搜索 Spec"
-          placeholder="搜索 task_id / page_id / 路径 / 类型"
+          placeholder="搜索 page_title / task_id / wave / 路径"
           @input="page = 1"
         />
         <select v-model="filter" aria-label="筛选 Spec" @change="page = 1">
@@ -121,9 +148,8 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
           <thead>
             <tr>
               <th>Spec</th>
+              <th>Wave</th>
               <th>页面路径</th>
-              <th>类型</th>
-              <th>评分</th>
               <th>依赖</th>
               <th>实现 / 构建 / 验证</th>
               <th>原因</th>
@@ -137,16 +163,14 @@ const tone = (map: Record<string, Tone>, v: string): Tone => map[v] ?? 'muted'
               @click="openDetail(t.task_id)"
             >
               <td class="title">
-                <strong>{{ t.task_id }}</strong>
-                <small>{{ t.page_id }}</small>
+                <strong>{{ t.page_title ?? t.task_id }}</strong>
+                <small>{{ t.page_title ? `${t.task_id} · ${t.page_id}` : t.page_id }}</small>
+              </td>
+              <td class="wave-cell">
+                <span class="tag blue">{{ waveOf.get(t.task_id) ?? '—' }}</span>
               </td>
               <td class="title path-cell">
                 {{ pagePathText(t.page_path) || '—' }}
-              </td>
-              <td><span class="tag">{{ t.kind ?? UNKNOWN }}</span></td>
-              <td class="score-cell">
-                <strong class="score">{{ t.page_score }}</strong>
-                <small>E{{ t.enablement }} · R{{ t.ordinary_reachability }} · S{{ t.shallowness }}</small>
               </td>
               <td class="title"><small>{{ t.dependencies.join(', ') || '—' }}</small></td>
               <td>
@@ -282,14 +306,8 @@ td .tag {
   color: #34445c;
 }
 
-.score {
-  font-size: 18px;
-  font-weight: 650;
-  color: #34445c;
-}
-
-/* 评分列：E·R·S 摘要固定格式，不折行（超出由表格横向滚动兜底） */
-.score-cell {
+/* Wave 列（原样展示 wave_id） */
+.wave-cell {
   white-space: nowrap;
 }
 

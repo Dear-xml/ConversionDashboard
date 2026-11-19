@@ -38,9 +38,22 @@ const task = computed<Task | null>(() => {
 
 const updatedText = computed(() => resolveUpdatedTime(raw.value, fileMtime.value))
 
-/** 页面路径标题（数组 join / 字符串原样），无则回退 page_id */
+/** 当前 task 所属 wave_id（planning.waves 的 task_ids 反查） */
+const waveId = computed<string | null>(() => {
+  const id = taskId.value
+  for (const w of raw.value?.planning?.waves ?? []) {
+    if (w.task_ids?.includes(id)) return w.wave_id
+  }
+  return null
+})
+
+/** 页面标题：page_title 优先，回退页面路径（数组 join / 字符串原样）→ page_id → taskId */
 const pageTitle = computed(
-  () => pagePathText(task.value?.page_path) || task.value?.page_id || taskId.value,
+  () =>
+    task.value?.page_title ||
+    pagePathText(task.value?.page_path) ||
+    task.value?.page_id ||
+    taskId.value,
 )
 
 // 按需加载 spec.md（page-specs/<package>/spec.md）
@@ -118,6 +131,8 @@ const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []
       <div class="meta-grid">
         <div><small>task_id</small><span>{{ task.task_id }}</span></div>
         <div><small>page_id</small><span>{{ task.page_id }}</span></div>
+        <div v-if="waveId"><small>wave_id</small><span>{{ waveId }}</span></div>
+        <div v-if="task.page_title"><small>page_title</small><span>{{ task.page_title }}</span></div>
         <div><small>类型</small><span>{{ task.kind ?? UNKNOWN }}</span></div>
         <div><small>评分</small><span>{{ task.page_score }}（E{{ task.enablement }} · R{{ task.ordinary_reachability }} · S{{ task.shallowness }}）</span></div>
         <div><small>依赖</small><span>{{ task.dependencies.join(', ') || '—' }}</span></div>

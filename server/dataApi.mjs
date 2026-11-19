@@ -70,18 +70,43 @@ function projectProgress(body, readReport) {
   }
 }
 
-/** 自动探测会话目录：数据目录自身、工程根、工程父级下的 .harmonybot */
+/**
+ * 自动探测会话目录：自数据目录向上最多 5 层。
+ * 近层（depth ≤ 2，即数据目录/工程根/工作目录层）：查自身 + 直接子目录下的 .harmonybot；
+ * 外层（depth ≥ 3，多工程共居层）：仅查自身，避免把兄弟工程的会话误聚合进来。最近命中优先。
+ */
 function detectSessionDir(root) {
-  for (const cand of [
-    path.join(root, '.harmonybot'),
-    path.join(root, '..', '.harmonybot'),
-    path.join(root, '..', '..', '.harmonybot'),
-  ]) {
+  const tryDir = (dir) => {
     try {
-      if (fs.statSync(cand).isDirectory()) return path.resolve(cand)
+      if (fs.statSync(dir).isDirectory()) return path.resolve(dir)
     } catch {
-      // 不存在，继续探测
+      // 不存在
     }
+    return null
+  }
+  let cur = root
+  for (let depth = 0; depth < 5; depth++) {
+    // ① 该层自身
+    const self = tryDir(path.join(cur, '.harmonybot'))
+    if (self) return self
+    // ② 近层才扫直接子目录（字母序取第一个命中）
+    if (depth < 3) {
+      try {
+        const children = fs
+          .readdirSync(cur, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .sort((a, b) => a.name.localeCompare(b.name))
+        for (const child of children) {
+          const hit = tryDir(path.join(cur, child.name, '.harmonybot'))
+          if (hit) return hit
+        }
+      } catch {
+        // 目录不可读，继续向上
+      }
+    }
+    const parent = path.dirname(cur)
+    if (parent === cur) break // 到达文件系统根
+    cur = parent
   }
   return null
 }

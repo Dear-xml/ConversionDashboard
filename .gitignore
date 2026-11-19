@@ -17,6 +17,7 @@ dist-ssr
 
 # Session / tool state
 .harmonybot/
+.opencode/
 
 # Editor directories and files
 .vscode/*
