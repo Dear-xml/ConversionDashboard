@@ -67,9 +67,10 @@ function dashboardData(api: DataApi): Plugin {
       })
 
       // 文件变化 → Vite WS 推送（dev 独有，前端毫秒级刷新）
-      api.watch((files) => {
+      const watcher = api.watch((files) => {
         server.ws.send({ type: 'custom', event: 'dashboard:data-changed', data: { files } })
       })
+      server.httpServer?.once('close', () => watcher.close())
 
       console.log(`[dashboard-data] dataDir=${api.root}`)
     },

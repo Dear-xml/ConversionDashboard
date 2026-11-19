@@ -213,7 +213,7 @@ const server = http.createServer((req, res) => {
     })
     res.write(': connected\n\n')
     sseClients.add(res)
-    req.on('close', () => sseClients.delete(res))
+    res.on('close', () => sseClients.delete(res))
     return
   }
 

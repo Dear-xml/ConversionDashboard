@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import PageHeading from '../components/PageHeading.vue'
 import { onJsonChange } from '../utils/JsonOperateUtils'
 import { formatTime, formatDuration, resolveUpdatedTime } from '../utils/datetime'
+import { formatStageTiming } from '../utils/stageTiming'
 import { formatTokens } from '../utils/format'
 import { jumpToDetail, stageToTab } from '../utils/navigation'
 import { pagePathText } from '../constants/batchReport'
@@ -67,23 +68,11 @@ const stages = computed(() =>
     ...s,
     statusLabel: s.status ?? UNKNOWN,
     isCurrent: s.id === summary.value?.currentStage,
+    timing: formatStageTiming(s, formatTime, formatDuration),
   })),
 )
 
 const blockers = computed(() => [...new Set((raw.value?.stages ?? []).flatMap((s) => s.blockers))])
-
-// 阶段开始/完成时间（供状态总览阶段格展示）
-const stageStarted = (iso: string | null): string => (iso ? `开始 ${formatTime(iso)}` : '')
-
-const stageEnded = (s: { startedAt: string | null; endedAt: string | null }): string => {
-  if (!s.endedAt) return ''
-  const base = `完成 ${formatTime(s.endedAt)}`
-  if (s.startedAt) {
-    const ms = Date.parse(s.endedAt) - Date.parse(s.startedAt)
-    if (Number.isFinite(ms) && ms >= 0) return `${base} · 用时 ${formatDuration(ms)}`
-  }
-  return base
-}
 
 const sentence = computed(() => {
   const s = summary.value
@@ -188,8 +177,8 @@ const openSpec = (taskId: string): void => {
             <i v-if="st.status === 'in_progress'" class="live-dot"></i>{{ st.name }}
           </span>
           <strong>{{ st.statusLabel }}</strong>
-          <small>{{ stageStarted(st.startedAt) || '未开始' }}</small>
-          <small v-if="stageEnded(st)">{{ stageEnded(st) }}</small>
+          <small>{{ st.timing.start }}</small>
+          <small v-if="st.timing.end">{{ st.timing.end }}</small>
         </button>
       </div>
 
@@ -223,8 +212,7 @@ const openSpec = (taskId: string): void => {
               </strong>
               <span class="tag blue">{{ currentStage.status ?? UNKNOWN }}</span>
             </div>
-            <small v-if="currentStage.startedAt">{{ stageStarted(currentStage.startedAt) }}</small>
-            <small v-else>尚未开始</small>
+            <small>{{ currentStage.timing.start }}</small>
             <div v-if="stageRunning" class="activity-rail is-active is-indeterminate" role="progressbar" aria-label="阶段进行中">
               <i></i>
             </div>

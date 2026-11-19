@@ -1,6 +1,7 @@
 export interface FileStamp {
   mtimeMs: number
   size: number
+  revision?: string
 }
 
 export interface DataApi {
@@ -8,7 +9,7 @@ export interface DataApi {
   sessionDir: string | null
   listFiles(): Record<string, FileStamp>
   handle(req: unknown, res: unknown): boolean
-  watch(onChange: (relPaths: string[]) => void): { close(): void } | null
+  watch(onChange: (relPaths: string[]) => void): { close(): void }
 }
 
 export declare function createDataApi(
