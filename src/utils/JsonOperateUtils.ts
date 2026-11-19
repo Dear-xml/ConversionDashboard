@@ -1,6 +1,7 @@
 export interface FileStamp {
   mtimeMs: number
   size: number
+  revision?: string
 }
 
 export interface DataManifest {
@@ -16,10 +17,26 @@ export interface ChangeMeta {
   mtimeMs?: number
 }
 
-/** 兜底轮询间隔：SSE 推送正常时几乎不触发；SSE 断开/不可用时按此间隔降级刷新 */
+/** 普通文件的兜底轮询间隔。 */
 export const DEFAULT_POLL_MS = 10_000
 
 const DATA_BASE = '/api/data'
+const LIVE_PROGRESS_FILES = new Set(['progress.json', 'page-specs/batch_report.json'])
+const PROGRESS_POLL_MS = 2_000
+const REQUEST_TIMEOUT_MS = 5_000
+let pendingManifest: Promise<DataManifest> | undefined
+
+function loadManifest(): Promise<DataManifest> {
+  pendingManifest ??= (async () => {
+    const response = await fetch(`${DATA_BASE}/manifest`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) throw new Error(`读取 manifest 失败 (HTTP ${response.status})`)
+    return (await response.json()) as DataManifest
+  })().finally(() => { pendingManifest = undefined })
+  return pendingManifest
+}
 
 // ---- SSE 实时推送（dist/serve 模式；dev 走 Vite WS，不建 SSE） ----
 let sharedSse: EventSource | null = null
@@ -28,6 +45,13 @@ const sseSubs = new Set<{ relPath: string; trigger: () => void }>()
 function ensureSse(): void {
   if (sharedSse || import.meta.hot || typeof EventSource === 'undefined') return
   sharedSse = new EventSource(`${DATA_BASE}/events`)
+  let connected = false
+  sharedSse.onopen = (): void => {
+    if (connected) {
+      for (const sub of sseSubs) sub.trigger()
+    }
+    connected = true
+  }
   sharedSse.onmessage = (ev: MessageEvent<string>): void => {
     try {
       const { files } = JSON.parse(ev.data) as { files?: string[] }
@@ -141,41 +165,53 @@ export function onFileChange(
   callback: (buf: ArrayBuffer, meta: ChangeMeta) => void | Promise<void>,
   options: { pollMs?: number; immediate?: boolean } = {},
 ): () => void {
-  const { pollMs = DEFAULT_POLL_MS, immediate = true } = options
+  const {
+    pollMs = LIVE_PROGRESS_FILES.has(relPath) ? PROGRESS_POLL_MS : DEFAULT_POLL_MS,
+    immediate = true,
+  } = options
   let disposed = false
-  let ctrl: AbortController | null = null
-  let lastStamp: FileStamp | null = null
-  let timer: ReturnType<typeof setInterval> | null = null
-
-  const load = async (signal?: AbortSignal, mtimeMs?: number): Promise<void> => {
-    if (disposed) return
-    try {
-      const buf = await readFileArrayBuffer(relPath, signal)
-      if (disposed) return
-      await callback(buf, { relPath, fetchedAt: Date.now(), mtimeMs })
-    } catch (err) {
-      if (disposed) return
-      console.warn(`[JsonOperateUtils] 读取 ${relPath} 失败:`, err)
-    }
-  }
+  let loading = false
+  let refreshAgain = false
+  let lastRevision: string | undefined
+  let fileRequest: AbortController | undefined
 
   const check = async (): Promise<void> => {
     if (disposed) return
-    ctrl?.abort()
-    ctrl = new AbortController()
+    if (loading) {
+      refreshAgain = true
+      return
+    }
+    loading = true
     try {
-      const res = await fetch(`${DATA_BASE}/manifest`, { cache: 'no-store', signal: ctrl.signal })
-      if (!res.ok) return
-      const manifest = (await res.json()) as DataManifest
-      const stamp = manifest.files[relPath]
-      if (!stamp) return
-      const changed =
-        !lastStamp || lastStamp.mtimeMs !== stamp.mtimeMs || lastStamp.size !== stamp.size
-      if (!changed) return
-      lastStamp = stamp
-      await load(ctrl.signal, stamp.mtimeMs)
-    } catch {
-      // 断线：保留旧数据，等待下轮
+      const stamp = (await loadManifest()).files[relPath]
+      if (disposed) return
+      if (!stamp) {
+        lastRevision = undefined
+        return
+      }
+      const revision = stamp.revision ?? `${stamp.mtimeMs}:${stamp.size}`
+      if (revision === lastRevision) return
+
+      const request = new AbortController()
+      fileRequest = request
+      const timeout = setTimeout(() => request.abort(), REQUEST_TIMEOUT_MS)
+      try {
+        const buf = await readFileArrayBuffer(relPath, request.signal)
+        if (disposed) return
+        await callback(buf, { relPath, fetchedAt: Date.now(), mtimeMs: stamp.mtimeMs })
+        lastRevision = revision
+      } finally {
+        clearTimeout(timeout)
+        fileRequest = undefined
+      }
+    } catch (err) {
+      if (!disposed) console.warn(`[JsonOperateUtils] 读取 ${relPath} 失败:`, err)
+    } finally {
+      loading = false
+      if (refreshAgain) {
+        refreshAgain = false
+        void check()
+      }
     }
   }
 
@@ -191,14 +227,18 @@ export function onFileChange(
   ensureSse()
 
   if (immediate) void check()
-  timer = setInterval(() => void check(), pollMs)
+  const timer = setInterval(() => void check(), pollMs)
 
   return () => {
     disposed = true
-    sseSubs.delete(sub)
-    if (timer) clearInterval(timer)
-    ctrl?.abort()
+    clearInterval(timer)
+    fileRequest?.abort()
     hot?.off('dashboard:data-changed', onHot)
+    sseSubs.delete(sub)
+    if (sseSubs.size === 0 && sharedSse) {
+      sharedSse.close()
+      sharedSse = null
+    }
   }
 }
 
@@ -208,7 +248,7 @@ export function onFileChange(
  */
 export function onJsonChange<T = unknown>(
   relPath: string,
-  callback: (data: T, meta: ChangeMeta) => void,
+  callback: (data: T, meta: ChangeMeta) => void | Promise<void>,
   options: { pollMs?: number; immediate?: boolean } = {},
 ): () => void {
   return onFileChange(
@@ -225,7 +265,7 @@ export function onJsonChange<T = unknown>(
           throw new Error(`JSON 解析失败: ${relPath}`)
         }
       }
-      callback(data, meta)
+      await callback(data, meta)
     },
     options,
   )

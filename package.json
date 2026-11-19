@@ -15,6 +15,7 @@
     "dev": "vite",
     "dev:data": "node scripts/vite-with-data.mjs dev",
     "build": "vue-tsc -b && vite build",
+    "test": "node --test",
     "preview": "vite preview",
     "preview:data": "node scripts/vite-with-data.mjs preview",
     "serve": "node server/serve.mjs",

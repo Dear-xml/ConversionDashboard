@@ -11,6 +11,64 @@ const MIME = {
 
 /** 会话聚合虚拟文件（前端固定订阅路径） */
 const SESSIONS_KEY = '.harmonybot/_summary.json'
+const PROGRESS_KEY = 'progress.json'
+const BATCH_REPORT_KEY = 'page-specs/batch_report.json'
+const LIVE_PROGRESS_KEYS = [PROGRESS_KEY, BATCH_REPORT_KEY]
+
+function fileStamp(stat) {
+  return {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    revision: `${stat.ino}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`,
+  }
+}
+
+function timestamp(value) {
+  return typeof value === 'string' ? Date.parse(value) || 0 : 0
+}
+
+function projectProgress(body, readReport) {
+  try {
+    const progress = JSON.parse(body)
+    const stage = progress?.stages?.find(stage => stage.id === 'code-conversion')
+    if (stage?.status !== 'pending' || !progress.summary) return body
+    const report = readReport()
+    if (!Array.isArray(report?.tasks)) return body
+
+    let selected
+    if (report.planning != null) {
+      if (report.planning.phase !== 'bound' || !Array.isArray(report.planning.waves)) return body
+      selected = new Set(report.planning.waves.flatMap(wave => wave.task_ids ?? []))
+    }
+    const statuses = new Set(['in_progress', 'implemented', 'completed', 'blocked', 'failed'])
+    const resetTime = stage.lastUpdatedAt === progress.createdAt ? 0 : timestamp(stage.lastUpdatedAt)
+    let started = false
+    let firstStart = Infinity
+    let lastActivity = 0
+    for (const task of report.tasks) {
+      if (!statuses.has(task?.development) || (selected && !selected.has(task.task_id))) continue
+      const start = timestamp(task.started_at)
+      const activity = Math.max(start, timestamp(task.updated_at), timestamp(task.ended_at))
+      if (resetTime && activity <= resetTime) continue
+      started = true
+      if (start) firstStart = Math.min(firstStart, start)
+      lastActivity = Math.max(lastActivity, activity)
+    }
+    if (!started) return body
+
+    stage.status = 'in_progress'
+    stage.startedAt ??= Number.isFinite(firstStart) ? new Date(firstStart).toISOString() : null
+    if (lastActivity > timestamp(stage.lastUpdatedAt)) stage.lastUpdatedAt = new Date(lastActivity).toISOString()
+    if (lastActivity > timestamp(progress.updatedAt)) progress.updatedAt = new Date(lastActivity).toISOString()
+    progress.summary.pending--
+    progress.summary.inProgress++
+    progress.summary.currentStage = progress.stages.find(stage => ['in_progress', 'blocked'].includes(stage.status)).id
+    return JSON.stringify(progress)
+  } catch {
+    // 账本缺失、正在写入或旧格式时仍可读取原始阶段文件。
+    return body
+  }
+}
 
 /** 自动探测会话目录：数据目录自身、工程根、工程父级下的 .harmonybot */
 function detectSessionDir(root) {
@@ -111,10 +169,7 @@ export function createDataApi(dataDir, options = {}) {
         } else if (entry.isFile() && ALLOWED_EXT.has(path.extname(entry.name).toLowerCase())) {
           try {
             const stat = fs.statSync(abs)
-            out[path.relative(root, abs).split(path.sep).join('/')] = {
-              mtimeMs: stat.mtimeMs,
-              size: stat.size,
-            }
+            out[path.relative(root, abs).split(path.sep).join('/')] = fileStamp(stat)
           } catch {
             // 文件在扫描间隙被删除，跳过
           }
@@ -122,6 +177,9 @@ export function createDataApi(dataDir, options = {}) {
       }
     }
     walk(root)
+    if (out[PROGRESS_KEY]) {
+      out[PROGRESS_KEY].revision += `|${out[BATCH_REPORT_KEY]?.revision ?? ''}`
+    }
     const sessions = sessionsSummary()
     if (sessions) out[SESSIONS_KEY] = sessions.stamp
     return out
@@ -310,7 +368,10 @@ export function createDataApi(dataDir, options = {}) {
         return true
       }
       try {
-        const data = fs.readFileSync(abs)
+        let data = fs.readFileSync(abs)
+        if (p === PROGRESS_KEY) {
+          data = projectProgress(data, () => JSON.parse(fs.readFileSync(path.join(root, BATCH_REPORT_KEY), 'utf8')))
+        }
         res.statusCode = 200
         res.setHeader('Content-Type', MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream')
         res.setHeader('Cache-Control', 'no-store')
@@ -330,9 +391,8 @@ export function createDataApi(dataDir, options = {}) {
   }
 
   /**
-   * 监听数据目录（含会话目录）内白名单文件变化，debounce 300ms 后回调变化的相对路径列表。
+   * 聚合 150ms 内的文件变化；阶段和任务账本独立轮询，兼容原子替换和 watch 失败。
    * 会话目录变化统一映射为 .harmonybot/_summary.json。
-   * 平台不支持 recursive watch 时返回 null（调用方退化为轮询）。
    */
   const watch = (onChange) => {
     const changed = new Set()
@@ -340,18 +400,37 @@ export function createDataApi(dataDir, options = {}) {
     const watchers = []
     const dirs = sessionDir ? [root, sessionDir] : [root]
 
-    const flush = () => {
-      if (timer) clearTimeout(timer)
+    const enqueue = key => {
+      changed.add(key)
+      if (key === BATCH_REPORT_KEY) changed.add(PROGRESS_KEY)
+      if (timer) return
       timer = setTimeout(() => {
         const files = Array.from(changed)
         changed.clear()
         timer = null
-        if (files.length) onChange(files)
-      }, 300)
+        onChange(files)
+      }, 150)
     }
 
-    try {
-      for (const dir of dirs) {
+    const revision = key => {
+      try {
+        return fileStamp(fs.statSync(path.join(root, key))).revision
+      } catch {
+        return null
+      }
+    }
+    const liveRevisions = new Map(LIVE_PROGRESS_KEYS.map(key => [key, revision(key)]))
+    const poll = setInterval(() => {
+      for (const [key, previous] of liveRevisions) {
+        const next = revision(key)
+        if (next === previous) continue
+        liveRevisions.set(key, next)
+        enqueue(key)
+      }
+    }, 500)
+
+    for (const dir of dirs) {
+      try {
         const watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
           if (!filename) return
           const abs = path.isAbsolute(filename) ? filename : path.join(dir, filename)
@@ -359,25 +438,23 @@ export function createDataApi(dataDir, options = {}) {
           if (dir === sessionDir) {
             // 会话目录：任何 ses_*.json 变化都触发聚合文件更新
             if (!/^ses_.*\.json$/.test(path.basename(abs))) return
-            changed.add(SESSIONS_KEY)
+            enqueue(SESSIONS_KEY)
           } else {
             const rel = path.relative(root, abs).split(path.sep).join('/')
-            if (!ALLOWED_EXT.has(path.extname(rel).toLowerCase())) return
-            changed.add(rel)
+            if (LIVE_PROGRESS_KEYS.includes(rel) || !ALLOWED_EXT.has(path.extname(rel).toLowerCase())) return
+            enqueue(rel)
           }
-          flush()
         })
-        watcher.on('close', () => {
-          if (timer) clearTimeout(timer)
-        })
+        watcher.on('error', () => watcher.close())
         watchers.push(watcher)
+      } catch {
+        // 其他文件仍由客户端轮询，阶段和账本仍可走 SSE。
       }
-    } catch {
-      for (const w of watchers) w.close()
-      return null
     }
     return {
       close() {
+        clearInterval(poll)
+        clearTimeout(timer)
         for (const w of watchers) w.close()
       },
     }
