@@ -1,4 +1,5 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
+import { SNAPSHOT } from '../utils/JsonOperateUtils'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -61,7 +62,10 @@ export const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  // 静态快照运行在 file:// 下，History 模式无法路由（pathname 是文件路径），必须用 hash 路由
+  history: SNAPSHOT
+    ? createWebHashHistory(import.meta.env.BASE_URL)
+    : createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 

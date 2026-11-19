@@ -26,7 +26,48 @@ const PROGRESS_POLL_MS = 2_000
 const REQUEST_TIMEOUT_MS = 5_000
 let pendingManifest: Promise<DataManifest> | undefined
 
+// ---- 静态快照模式：--export-snapshot 导出的单文件 HTML 注入数据后 file:// 离线可用 ----
+export interface SnapshotFile {
+  text: string
+  mtimeMs: number
+  size: number
+}
+
+export interface SnapshotPayload {
+  generatedAt: string
+  root: string
+  files: Record<string, SnapshotFile>
+}
+
+declare global {
+  interface Window {
+    __D2H_SNAPSHOT__?: SnapshotPayload | null
+  }
+}
+
+/** 非空表示运行在导出的静态快照 HTML 中：数据内嵌只读，无 server。 */
+export const SNAPSHOT: SnapshotPayload | null =
+  typeof window !== 'undefined' && window.__D2H_SNAPSHOT__ ? window.__D2H_SNAPSHOT__ : null
+
+function snapshotText(relPath: string): string {
+  const file = SNAPSHOT?.files[relPath]
+  if (!file) throw new Error(`数据文件不存在: ${relPath}`)
+  return file.text
+}
+
+function snapshotBuffer(text: string): ArrayBuffer {
+  const bytes = new TextEncoder().encode(text)
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
 function loadManifest(): Promise<DataManifest> {
+  if (SNAPSHOT) {
+    const files: Record<string, FileStamp> = {}
+    for (const [rel, file] of Object.entries(SNAPSHOT.files)) {
+      files[rel] = { mtimeMs: file.mtimeMs, size: file.size }
+    }
+    return Promise.resolve({ root: SNAPSHOT.root, generatedAt: Date.parse(SNAPSHOT.generatedAt) || 0, files })
+  }
   pendingManifest ??= (async () => {
     const response = await fetch(`${DATA_BASE}/manifest`, {
       cache: 'no-store',
@@ -43,7 +84,7 @@ let sharedSse: EventSource | null = null
 const sseSubs = new Set<{ relPath: string; trigger: () => void }>()
 
 function ensureSse(): void {
-  if (sharedSse || import.meta.hot || typeof EventSource === 'undefined') return
+  if (SNAPSHOT || sharedSse || import.meta.hot || typeof EventSource === 'undefined') return
   sharedSse = new EventSource(`${DATA_BASE}/events`)
   let connected = false
   sharedSse.onopen = (): void => {
@@ -86,6 +127,7 @@ function parseJsonl<T>(text: string): T[] {
 
 /** 读取数据目录中任意文件的原始二进制（no-store）。 */
 export async function readFileArrayBuffer(relPath: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  if (SNAPSHOT) return snapshotBuffer(snapshotText(relPath))
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
   const res = await fetch(url, { cache: 'no-store', signal })
   if (res.status === 404) throw new Error(`数据文件不存在: ${relPath}`)
@@ -112,6 +154,7 @@ export async function writeJson(
   },
   signal?: AbortSignal,
 ): Promise<{ updated: number }> {
+  if (SNAPSHOT) throw new Error('静态快照只读，不可回写')
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
   const res = await fetch(url, {
     method: 'POST',
@@ -127,6 +170,7 @@ export async function writeJson(
 }
 
 async function fetchText(relPath: string, signal?: AbortSignal): Promise<string> {
+  if (SNAPSHOT) return snapshotText(relPath)
   const url = `${DATA_BASE}/file?p=${encodeURIComponent(relPath)}`
   const res = await fetch(url, { cache: 'no-store', signal })
   if (res.status === 404) throw new Error(`数据文件不存在: ${relPath}`)
@@ -162,6 +206,11 @@ export async function listDataFiles(
   prefix: string,
   signal?: AbortSignal,
 ): Promise<Array<{ relPath: string; mtimeMs: number; size: number }>> {
+  if (SNAPSHOT) {
+    return Object.entries(SNAPSHOT.files)
+      .filter(([p]) => p.startsWith(prefix))
+      .map(([relPath, file]) => ({ relPath, mtimeMs: file.mtimeMs, size: file.size }))
+  }
   const res = await fetch(`${DATA_BASE}/manifest`, { cache: 'no-store', signal })
   if (!res.ok) throw new Error(`读取 manifest 失败 (HTTP ${res.status})`)
   const manifest = (await res.json()) as DataManifest
@@ -181,6 +230,25 @@ export function onFileChange(
   callback: (buf: ArrayBuffer, meta: ChangeMeta) => void | Promise<void>,
   options: { pollMs?: number; immediate?: boolean } = {},
 ): () => void {
+  // 静态快照：立即加载一次即止，无轮询/SSE
+  if (SNAPSHOT) {
+    if (options.immediate !== false) {
+      void (async () => {
+        const file = SNAPSHOT.files[relPath]
+        if (!file) return
+        try {
+          await callback(snapshotBuffer(file.text), {
+            relPath,
+            fetchedAt: Date.parse(SNAPSHOT.generatedAt) || Date.now(),
+            mtimeMs: file.mtimeMs,
+          })
+        } catch (err) {
+          console.warn(`[JsonOperateUtils] 快照读取 ${relPath} 失败:`, err)
+        }
+      })()
+    }
+    return () => {}
+  }
   const {
     pollMs = LIVE_PROGRESS_FILES.has(relPath) ? PROGRESS_POLL_MS : DEFAULT_POLL_MS,
     immediate = true,

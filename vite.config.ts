@@ -100,6 +100,23 @@ export default defineConfig(({ mode, command }) => {
     )
   }
 
+  // 单文件快照模板构建（vite build --mode singlefile）：全部 chunk 内联进一个 JS，
+  // 产物在 dist-single/，由 scripts/build-standalone.mjs 内联成 dashboard.standalone.html
+  if (mode === 'singlefile') {
+    return {
+      base: './',
+      plugins: [vue()],
+      build: {
+        outDir: 'dist-single',
+        cssCodeSplit: false,
+        assetsInlineLimit: 100_000_000,
+        // Vite 8 弃用提示改用 codeSplitting:false，但实测其不内联动态导入 chunk；
+        // 此处必须 inlineDynamicImports 才能产出真正的单文件
+        rollupOptions: { output: { inlineDynamicImports: true } },
+      },
+    }
+  }
+
   const plugins: Plugin[] = [vue()]
   if (dataDir) {
     plugins.push(dashboardData(createDataApi(dataDir)))

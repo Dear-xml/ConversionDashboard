@@ -2,9 +2,16 @@
 // 独立迁移看板服务器（零依赖，Node >= 18）：
 //   node server/serve.mjs --dataDir <project>/.migration [--port 8080] [--host 127.0.0.1] [--dir ../web]
 //   node server/serve.mjs --dataDir <project>/.migration --detach [--log-file <path>]
+//   node server/serve.mjs --dataDir <project>/.migration --export-snapshot [--out <path>] [--no-open]
+// --dataDir 缺省为当前目录：cd <项目>-migration/.migration && npx d2h-dashboard --export-snapshot
+//   即可为历史迁移数据（无 dashboard.html）现场生成并查看。
 // --detach：自守护启动——父进程 spawn 分离子进程（stdout/stderr 直写日志文件），
 //   轮询日志直到子进程就绪后原样打印 stdout 契约并退出；调用方无需 shell 重定向/引号转义。
 //   默认日志 %TEMP%/d2h-dashboard-<dataDir哈希8位>.log（每次启动截断重写，跨项目天然隔离）。
+// --export-snapshot：枚举数据目录白名单文件（.json/.jsonl/.md，含会话汇总虚拟文件），
+//   注入 dashboard.standalone.html 模板，写出单文件离线快照（默认 <dataDir>/dashboard.html）。
+//   拷走整个 .migration 后双击该 HTML 即可离线查看当时进展；运行期服务器仍只读。
+//   生成后默认用系统浏览器打开快照（--no-open 关闭；打开失败不影响导出）。
 // stdout 契约（供 skill 解析）：
 //   [dashboard] dataDir=<绝对路径>
 //   [dashboard] http://<host>:<实际端口>
@@ -34,14 +41,98 @@ const dataDir =
   argValue('dataDir') ??
   argValue('data-dir') ??
   process.env.npm_config_dataDir ??
-  process.env.DASHBOARD_DATA_DIR
-if (!dataDir) {
-  console.error('[dashboard] 缺少 --dataDir 参数（指向迁移工程的 .migration 目录）')
-  process.exit(1)
-}
+  process.env.DASHBOARD_DATA_DIR ??
+  process.cwd() // 默认当前目录：支持 cd <项目>-migration/.migration && npx d2h-dashboard ...
 if (!fs.existsSync(dataDir)) {
   console.error(`[dashboard] 数据目录不存在: ${dataDir}`)
   process.exit(1)
+}
+
+// ---- --export-snapshot：枚举数据目录白名单文件 → 注入 standalone 模板 → 写出单文件离线快照 ----
+// 运行期服务器保持只读；本命令是唯一显式写出：默认产出 <dataDir>/dashboard.html（可 --out 覆盖）。
+if (process.argv.includes('--export-snapshot')) {
+  const root = path.resolve(dataDir)
+  const outPath = path.resolve(argValue('out') ?? path.join(root, 'dashboard.html'))
+  const templatePath = [
+    path.resolve(__dirname, 'dashboard.standalone.html'), // 内嵌 skill 布局：与 serve.mjs 同目录（app/）
+    path.resolve(__dirname, '..', 'dashboard.standalone.html'), // npm 包布局：包根
+  ].find((p) => fs.existsSync(p))
+  if (!templatePath) {
+    console.error('[dashboard] 缺少 dashboard.standalone.html 模板（包应含该文件；源码运行请先 npm run build）')
+    process.exit(1)
+  }
+  const exportApi = createDataApi(dataDir, {})
+  const stamps = exportApi.listFiles()
+  const files = {}
+  const skipped = []
+  const readVirtual = (rel) => new Promise((resolve) => {
+    const res = {
+      statusCode: 0,
+      chunks: [],
+      setHeader() {},
+      end(chunk) {
+        if (chunk) this.chunks.push(chunk)
+        resolve(this.statusCode === 200 ? this.chunks.join('') : null)
+      },
+    }
+    exportApi.handle({ url: `/api/data/file?p=${encodeURIComponent(rel)}` }, res)
+  })
+  for (const rel of Object.keys(stamps)) {
+    try {
+      let text = null
+      if (rel === '.harmonybot/_summary.json') {
+        text = await readVirtual(rel)
+      } else {
+        text = fs.readFileSync(path.resolve(root, rel), 'utf8')
+      }
+      if (text === null) { skipped.push(rel); continue }
+      files[rel] = { text, mtimeMs: stamps[rel].mtimeMs, size: stamps[rel].size }
+    } catch {
+      skipped.push(rel)
+    }
+  }
+  const payload = { generatedAt: new Date().toISOString(), root, files }
+  let payloadJson = JSON.stringify(payload)
+  for (const [source, escaped] of [['&', '\\u0026'], ['<', '\\u003c'], ['>', '\\u003e'], ['\u2028', '\\u2028'], ['\u2029', '\\u2029']]) {
+    payloadJson = payloadJson.split(source).join(escaped)
+  }
+  const template = fs.readFileSync(templatePath, 'utf8')
+  const marker = '/*__D2H_SNAPSHOT__*/null'
+  if (template.split(marker).length !== 2) {
+    console.error('[dashboard] 模板注入点异常（应恰好 1 处）')
+    process.exit(1)
+  }
+  const html = template.replace(marker, payloadJson)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  const temp = `${outPath}.tmp-${process.pid}`
+  fs.writeFileSync(temp, html)
+  fs.renameSync(temp, outPath)
+  // 默认用系统默认浏览器打开快照（--no-open 关闭）；打开失败不影响导出结果
+  let opened = false
+  if (!process.argv.includes('--no-open')) {
+    try {
+      const opener =
+        process.platform === 'win32'
+          ? spawn('cmd', ['/c', 'start', '', outPath], { detached: true, stdio: 'ignore', windowsHide: true })
+          : process.platform === 'darwin'
+            ? spawn('open', [outPath], { detached: true, stdio: 'ignore' })
+            : spawn('xdg-open', [outPath], { detached: true, stdio: 'ignore' })
+      opener.unref()
+      opened = true
+    } catch {
+      // 无图形环境/无默认浏览器：只记录在结果里
+    }
+  }
+  console.log(JSON.stringify({
+    ok: true,
+    out: outPath,
+    template: templatePath,
+    files: Object.keys(files).length,
+    skipped,
+    bytes: Buffer.byteLength(html),
+    opened,
+  }, null, 2))
+  process.exit(0)
 }
 
 // ---- --detach：spawn 分离子进程并等待就绪，然后父进程退出 ----

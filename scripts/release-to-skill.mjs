@@ -28,6 +28,9 @@ if (!target) {
 
 console.log('[release] 构建前端…')
 execSync('npx vite build', { cwd: projectRoot, stdio: 'inherit' })
+// 单文件快照模板（--export-snapshot 注入用）
+execSync('npx vite build --mode singlefile', { cwd: projectRoot, stdio: 'inherit' })
+execSync('node scripts/build-standalone.mjs', { cwd: projectRoot, stdio: 'inherit' })
 
 const appDir = path.resolve(target, 'app')
 fs.rmSync(appDir, { recursive: true, force: true })
@@ -39,6 +42,8 @@ fs.cpSync(path.join(projectRoot, 'dist'), appDir, { recursive: true })
 for (const f of ['dataApi.mjs', 'serve.mjs']) {
   fs.copyFileSync(path.join(projectRoot, 'server', f), path.join(appDir, f))
 }
+// 单文件快照模板
+fs.copyFileSync(path.join(projectRoot, 'dashboard.standalone.html'), path.join(appDir, 'dashboard.standalone.html'))
 // 包描述（bin + start，供 npm start / npx 调用）
 fs.writeFileSync(
   path.join(appDir, 'package.json'),

@@ -1,6 +1,6 @@
 {
   "name": "d2h-dashboard",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "Real-time Android-to-HarmonyOS migration dashboard: zero-dependency local server + static web reading .migration artifacts",
   "bin": {
@@ -9,12 +9,13 @@
   "files": [
     "dist/",
     "server/serve.mjs",
-    "server/dataApi.mjs"
+    "server/dataApi.mjs",
+    "dashboard.standalone.html"
   ],
   "scripts": {
     "dev": "vite",
     "dev:data": "node scripts/vite-with-data.mjs dev",
-    "build": "vue-tsc -b && vite build",
+    "build": "vue-tsc -b && vite build && vite build --mode singlefile && node scripts/build-standalone.mjs",
     "test": "node --test",
     "preview": "vite preview",
     "preview:data": "node scripts/vite-with-data.mjs preview",

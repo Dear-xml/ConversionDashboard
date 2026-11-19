@@ -1,4 +1,4 @@
-import type { DataManifest } from './JsonOperateUtils'
+import { SNAPSHOT, type DataManifest } from './JsonOperateUtils'
 
 export interface AppMeta {
   /** 数据根目录（manifest.root） */
@@ -17,6 +17,15 @@ export interface AppMeta {
  * - 图标探测 /app-icon（serve.mjs --icon / vite DASHBOARD_ICON 配置时可用），404 则 null
  */
 export async function fetchAppMeta(signal?: AbortSignal): Promise<AppMeta> {
+  // 静态快照：无 server，直接从内嵌数据推导，图标不可用
+  if (SNAPSHOT) {
+    const projectPath =
+      SNAPSHOT.root.endsWith('.migration')
+        ? SNAPSHOT.root.slice(0, -'.migration'.length).replace(/[\\/]$/, '')
+        : SNAPSHOT.root
+    const projectName = projectPath ? projectPath.split(/[\\/]/).filter(Boolean).pop() ?? null : null
+    return { dataRoot: SNAPSHOT.root, projectPath, projectName, iconUrl: null }
+  }
   let dataRoot: string | null = null
   try {
     const res = await fetch('/api/data/manifest', { cache: 'no-store', signal })
