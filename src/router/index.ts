@@ -57,7 +57,8 @@ export const routes = [
     path: '/review',
     name: 'review',
     component: () => import('../pages/Review.vue'),
-    meta: { title: '功能完备度', tab: 'review', icon: '◎' },
+    // 暂时隐藏侧栏入口（不设 tab 即不进菜单）；路由保留可直接访问
+    meta: { title: '功能完备度' },
   },
 ]
 
